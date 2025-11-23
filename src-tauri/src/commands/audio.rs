@@ -1,7 +1,7 @@
 use crate::audio_feedback;
 use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
-use crate::settings::{get_settings, write_settings};
+use crate::settings::{get_settings, write_settings, AudioSource};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -179,4 +179,32 @@ pub fn get_clamshell_microphone(app: AppHandle) -> Result<String, String> {
     Ok(settings
         .clamshell_microphone
         .unwrap_or_else(|| "default".to_string()))
+}
+
+#[tauri::command]
+pub fn set_audio_source(app: AppHandle, source: String) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    let audio_source = match source.as_str() {
+        "microphone" => Some(AudioSource::Microphone),
+        "system_audio" => Some(AudioSource::SystemAudio),
+        _ => None,
+    };
+    settings.audio_source = audio_source;
+    write_settings(&app, settings);
+
+    // Update the audio manager to use the new source
+    let rm = app.state::<Arc<AudioRecordingManager>>();
+    rm.update_selected_device()
+        .map_err(|e| format!("Failed to update audio source: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_audio_source(app: AppHandle) -> Result<String, String> {
+    let settings = get_settings(&app);
+    Ok(match settings.audio_source {
+        Some(AudioSource::SystemAudio) => "system_audio".to_string(),
+        _ => "microphone".to_string(),
+    })
 }

@@ -79,6 +79,19 @@ pub enum RecordingRetentionPeriod {
     Months3,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioSource {
+    Microphone,
+    SystemAudio,
+}
+
+impl Default for AudioSource {
+    fn default() -> Self {
+        AudioSource::Microphone
+    }
+}
+
 impl Default for ModelUnloadTimeout {
     fn default() -> Self {
         ModelUnloadTimeout::Never
@@ -175,6 +188,8 @@ pub struct AppSettings {
     pub clamshell_microphone: Option<String>,
     #[serde(default)]
     pub selected_output_device: Option<String>,
+    #[serde(default)]
+    pub audio_source: Option<AudioSource>,
     #[serde(default = "default_translate_to_english")]
     pub translate_to_english: bool,
     #[serde(default = "default_selected_language")]
@@ -238,7 +253,7 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_selected_language() -> String {
-    "auto".to_string()
+    "vi".to_string() // Vietnamese as default
 }
 
 fn default_overlay_position() -> OverlayPosition {
@@ -374,12 +389,13 @@ pub fn get_default_settings() -> AppSettings {
         start_hidden: default_start_hidden(),
         autostart_enabled: default_autostart_enabled(),
         selected_model: "".to_string(),
-        always_on_microphone: false,
+        always_on_microphone: true, // Always-on mode for continuous recording
         selected_microphone: None,
         clamshell_microphone: None,
         selected_output_device: None,
+        audio_source: Some(AudioSource::SystemAudio), // Default to System Audio for testing
         translate_to_english: false,
-        selected_language: "auto".to_string(),
+        selected_language: "vi".to_string(), // Vietnamese as default
         overlay_position: OverlayPosition::Bottom,
         debug_mode: false,
         log_level: default_log_level(),
@@ -430,7 +446,7 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
         .store(SETTINGS_STORE_PATH)
         .expect("Failed to initialize store");
 
-    let settings = if let Some(settings_value) = store.get("settings") {
+    let mut settings = if let Some(settings_value) = store.get("settings") {
         // Parse the entire settings object
         match serde_json::from_value::<AppSettings>(settings_value) {
             Ok(settings) => {
@@ -450,6 +466,12 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
         store.set("settings", serde_json::to_value(&default_settings).unwrap());
         default_settings
     };
+    
+    // Migrate: Change "auto" language to "vi" (Vietnamese) as default
+    if settings.selected_language == "auto" {
+        settings.selected_language = "vi".to_string();
+        store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
 
     settings
 }
@@ -459,7 +481,7 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         .store(SETTINGS_STORE_PATH)
         .expect("Failed to initialize store");
 
-    if let Some(settings_value) = store.get("settings") {
+    let mut settings = if let Some(settings_value) = store.get("settings") {
         serde_json::from_value::<AppSettings>(settings_value).unwrap_or_else(|_| {
             let default_settings = get_default_settings();
             store.set("settings", serde_json::to_value(&default_settings).unwrap());
@@ -469,7 +491,15 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         let default_settings = get_default_settings();
         store.set("settings", serde_json::to_value(&default_settings).unwrap());
         default_settings
+    };
+    
+    // Migrate: Change "auto" language to "vi" (Vietnamese) as default
+    if settings.selected_language == "auto" {
+        settings.selected_language = "vi".to_string();
+        write_settings(app, settings.clone());
     }
+    
+    settings
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {

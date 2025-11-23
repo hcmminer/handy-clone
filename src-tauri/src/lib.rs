@@ -362,6 +362,8 @@ pub fn run() {
             commands::audio::get_available_microphones,
             commands::audio::set_selected_microphone,
             commands::audio::get_selected_microphone,
+            commands::audio::set_audio_source,
+            commands::audio::get_audio_source,
             commands::audio::get_available_output_devices,
             commands::audio::set_selected_output_device,
             commands::audio::get_selected_output_device,

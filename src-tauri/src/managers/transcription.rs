@@ -375,6 +375,9 @@ impl TranscriptionManager {
                         .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
                 }
                 LoadedEngine::Parakeet(parakeet_engine) => {
+                    // Log language setting for debugging
+                    debug!("Parakeet transcription with language: {}", settings.selected_language);
+                    
                     let params = ParakeetInferenceParams {
                         timestamp_granularity: TimestampGranularity::Segment,
                         ..Default::default()

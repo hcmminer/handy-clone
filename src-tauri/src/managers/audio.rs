@@ -1,8 +1,11 @@
-use crate::audio_toolkit::{list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad};
+use crate::audio_toolkit::{
+    list_input_devices, vad::SmoothedVad, AudioRecorder, MacOSSystemAudio, SileroVad,
+    SystemAudioCapture,
+};
 use crate::helpers::clamshell;
-use crate::settings::{get_settings, AppSettings};
+use crate::settings::{get_settings, AppSettings, AudioSource};
 use crate::utils;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::Manager;
@@ -146,6 +149,8 @@ pub struct AudioRecordingManager {
     app_handle: tauri::AppHandle,
 
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
+    #[cfg(target_os = "macos")]
+    system_capture: Arc<Mutex<Option<Box<dyn SystemAudioCapture>>>>,
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
     did_mute: Arc<Mutex<bool>>,
@@ -168,6 +173,8 @@ impl AudioRecordingManager {
             app_handle: app.clone(),
 
             recorder: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            system_capture: Arc::new(Mutex::new(None)),
             is_open: Arc::new(Mutex::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
             did_mute: Arc::new(Mutex::new(false)),
@@ -242,11 +249,184 @@ impl AudioRecordingManager {
         }
 
         let start_time = Instant::now();
+        let settings = get_settings(&self.app_handle);
+        let audio_source = settings.audio_source.unwrap_or(AudioSource::Microphone);
 
         // Don't mute immediately - caller will handle muting after audio feedback
         let mut did_mute_guard = self.did_mute.lock().unwrap();
         *did_mute_guard = false;
 
+        if audio_source == AudioSource::SystemAudio {
+            // System Audio Capture
+            #[cfg(target_os = "macos")]
+            {
+                info!("Initializing system audio capture");
+                let mut capture = MacOSSystemAudio::new(&self.app_handle)?;
+                capture.start_capture()?;
+                *self.system_capture.lock().unwrap() = Some(Box::new(capture));
+                *open_flag = true;
+                info!(
+                    "System audio capture initialized in {:?}",
+                    start_time.elapsed()
+                );
+                
+                // Auto-start recording in always-on mode with system audio
+                let settings = get_settings(&self.app_handle);
+                if settings.always_on_microphone {
+                    info!("Always-on mode: Auto-starting continuous system audio transcription");
+                    let binding_id = "transcribe".to_string();
+                    if self.try_start_recording(&binding_id) {
+                        info!("Auto-started recording in always-on mode");
+                        
+                        // Start continuous transcription loop with sliding window (no audio loss like Google Translate)
+                        let app_handle = self.app_handle.clone();
+                        let rm = Arc::new(self.clone());
+                        std::thread::spawn(move || {
+                            use std::time::Duration;
+                            use std::collections::VecDeque;
+                            
+                            const TRANSCRIBE_INTERVAL_SECS: u64 = 3; // Transcribe every 3 seconds for real-time
+                            const MIN_AUDIO_SECS: usize = 2; // Minimum 2 seconds of audio before transcribing
+                            const OVERLAP_SECS: usize = 1; // Keep 1 second overlap to avoid missing audio
+                            const MIN_SAMPLES: usize = MIN_AUDIO_SECS * 16000;
+                            const OVERLAP_SAMPLES: usize = OVERLAP_SECS * 16000;
+                            
+                            // Accumulation buffer to avoid missing any audio
+                            let mut accumulated_buffer: VecDeque<f32> = VecDeque::new();
+                            
+                            info!("Auto-transcription thread started, interval: {}s (real-time mode, no audio loss)", TRANSCRIBE_INTERVAL_SECS);
+                            
+                            loop {
+                                std::thread::sleep(Duration::from_secs(TRANSCRIBE_INTERVAL_SECS));
+                                
+                                // Check if still in always-on mode
+                                let settings = crate::settings::get_settings(&app_handle);
+                                if !settings.always_on_microphone {
+                                    info!("Always-on mode disabled, stopping auto-transcription");
+                                    break;
+                                }
+                                
+                                // Ensure recording is active (for system audio, this just ensures buffer is ready)
+                                if !*rm.is_recording.lock().unwrap() {
+                                    if !rm.try_start_recording(&binding_id) {
+                                        warn!("Failed to restart recording in always-on mode");
+                                        break;
+                                    }
+                                }
+                                
+                                // Read new samples from system capture buffer and add to accumulation buffer
+                                let new_samples = {
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        if let Some(capture) = rm.system_capture.lock().unwrap().as_mut() {
+                                            match capture.read_samples() {
+                                                Ok(Some(s)) if !s.is_empty() => Some(s),
+                                                _ => None,
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    #[cfg(not(target_os = "macos"))]
+                                    {
+                                        None
+                                    }
+                                };
+                                
+                                // Add new samples to accumulation buffer
+                                if let Some(new_samples) = new_samples {
+                                    accumulated_buffer.extend(new_samples);
+                                }
+                                
+                                // Only transcribe if we have enough audio (minimum 2 seconds)
+                                if accumulated_buffer.len() >= MIN_SAMPLES {
+                                    // Take samples for transcription (keep overlap for next iteration)
+                                    let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
+                                        // Take all except overlap samples
+                                        let take_count = accumulated_buffer.len() - OVERLAP_SAMPLES;
+                                        accumulated_buffer.drain(..take_count).collect()
+                                    } else {
+                                        // Not enough for overlap, take all
+                                        accumulated_buffer.drain(..).collect()
+                                    };
+                                    
+                                    if !samples_to_transcribe.is_empty() {
+                                        info!("Auto-transcribing {} samples ({}s audio, {}s overlap kept)", 
+                                            samples_to_transcribe.len(), 
+                                            samples_to_transcribe.len() / 16000,
+                                            accumulated_buffer.len() / 16000);
+                                
+                                        // Trigger transcription
+                                        let tm = app_handle.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+                                        let hm = app_handle.state::<Arc<crate::managers::history::HistoryManager>>();
+                                        let samples_clone = samples_to_transcribe.clone();
+                                    
+                                        // Ensure model is loaded before transcribing
+                                        tm.initiate_model_load();
+                                        
+                                        // Wait for model to load (with timeout)
+                                        let mut wait_count = 0;
+                                        const MAX_WAIT: u32 = 20; // Max 10 seconds (20 * 500ms)
+                                        while !tm.is_model_loaded() && wait_count < MAX_WAIT {
+                                            std::thread::sleep(Duration::from_millis(500));
+                                            wait_count += 1;
+                                        }
+                                        
+                                        if !tm.is_model_loaded() {
+                                            warn!("Model still not loaded after waiting, skipping transcription");
+                                            continue;
+                                        }
+                                        
+                                        match tm.transcribe(samples_to_transcribe) {
+                                            Ok(transcription) => {
+                                                let trimmed = transcription.trim();
+                                                // Always log transcription results - this is important!
+                                                if !trimmed.is_empty() && trimmed.len() > 1 {
+                                                    // Only process if transcription has meaningful content (more than 1 char)
+                                                    info!("🎯 Auto-transcription result (len={}): '{}'", trimmed.len(), trimmed);
+                                                    
+                                                    // Save to history (async)
+                                                    let hm_clone = Arc::clone(&hm);
+                                                    let transcription_clone = trimmed.to_string();
+                                                    let samples_clone2 = samples_clone.clone();
+                                                    tauri::async_runtime::spawn(async move {
+                                                        if let Err(e) = hm_clone.save_transcription(
+                                                            samples_clone2,
+                                                            transcription_clone.clone(),
+                                                            None,
+                                                            None,
+                                                        ).await {
+                                                            error!("Failed to save auto-transcription to history: {}", e);
+                                                        }
+                                                    });
+                                                    
+                                                    // Paste the transcription
+                                                    if let Err(e) = crate::utils::paste(trimmed.to_string(), app_handle.clone()) {
+                                                        error!("Failed to paste auto-transcription: {}", e);
+                                                    }
+                                                }
+                                            }
+                                           Err(e) => {
+                                               error!("Auto-transcription failed: {}", e);
+                                           }
+                                       }
+                                    }
+                                }
+                                // Continue loop - accumulation buffer keeps growing, no audio loss
+                            }
+                        });
+                    }
+                }
+                
+                return Ok(());
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(anyhow::anyhow!("System audio capture not supported on this platform"));
+            }
+        }
+
+        // Regular Microphone Capture
         let vad_path = self
             .app_handle
             .path()
@@ -265,7 +445,6 @@ impl AudioRecordingManager {
         }
 
         // Get the selected device from settings, considering clamshell mode
-        let settings = get_settings(&self.app_handle);
         let selected_device = self.get_effective_microphone_device(&settings);
 
         if let Some(rec) = recorder_opt.as_mut() {
@@ -292,6 +471,14 @@ impl AudioRecordingManager {
             set_mute(false);
         }
         *did_mute_guard = false;
+
+        // Stop System Capture
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(mut capture) = self.system_capture.lock().unwrap().take() {
+                let _ = capture.stop_capture();
+            }
+        }
 
         if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
             // If still recording, stop first.
@@ -344,6 +531,29 @@ impl AudioRecordingManager {
                 }
             }
 
+            let settings = get_settings(&self.app_handle);
+            let audio_source = settings.audio_source.unwrap_or(AudioSource::Microphone);
+
+            if audio_source == AudioSource::SystemAudio {
+                // System capture is continuous, so we just mark state.
+                // Clear any old buffer data before starting "recording" segment.
+                #[cfg(target_os = "macos")]
+                {
+                    if let Some(capture) = self.system_capture.lock().unwrap().as_mut() {
+                        let _ = capture.read_samples(); // Clear buffer
+                        *self.is_recording.lock().unwrap() = true;
+                        *state = RecordingState::Recording {
+                            binding_id: binding_id.to_string(),
+                        };
+                        debug!("System recording started for binding {binding_id}");
+                        return true;
+                    }
+                }
+                error!("System capture not available");
+                return false;
+            }
+
+            // Regular microphone recording
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                 if rec.start().is_ok() {
                     *self.is_recording.lock().unwrap() = true;
@@ -380,7 +590,32 @@ impl AudioRecordingManager {
                 *state = RecordingState::Idle;
                 drop(state);
 
-                let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                let settings = get_settings(&self.app_handle);
+                let audio_source = settings.audio_source.unwrap_or(AudioSource::Microphone);
+
+                let samples = if audio_source == AudioSource::SystemAudio {
+                    // Read samples from system capture
+                    #[cfg(target_os = "macos")]
+                    {
+                        if let Some(capture) = self.system_capture.lock().unwrap().as_mut() {
+                            match capture.read_samples() {
+                                Ok(Some(s)) => s,
+                                Ok(None) => Vec::new(),
+                                Err(e) => {
+                                    error!("System capture read failed: {e}");
+                                    Vec::new()
+                                }
+                            }
+                        } else {
+                            error!("System capture not available");
+                            Vec::new()
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        Vec::new()
+                    }
+                } else if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     match rec.stop() {
                         Ok(buf) => buf,
                         Err(e) => {

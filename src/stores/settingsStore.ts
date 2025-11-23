@@ -113,6 +113,8 @@ const settingUpdaters: {
     invoke("set_selected_output_device", {
       deviceName: value === "Default" ? "default" : value,
     }),
+  audio_source: (value) =>
+    invoke("set_audio_source", { source: value }),
   recording_retention_period: (value) =>
     invoke("update_recording_retention_period", { period: value }),
   translate_to_english: (value) =>
@@ -181,11 +183,13 @@ export const useSettingsStore = create<SettingsStore>()(
           selectedMicrophone,
           clamshellMicrophone,
           selectedOutputDevice,
+          audioSource,
         ] = await Promise.allSettled([
           invoke("get_microphone_mode"),
           invoke("get_selected_microphone"),
           invoke("get_clamshell_microphone"),
           invoke("get_selected_output_device"),
+          invoke("get_audio_source"),
         ]);
 
         // Merge all settings
@@ -207,6 +211,10 @@ export const useSettingsStore = create<SettingsStore>()(
             selectedOutputDevice.status === "fulfilled"
               ? (selectedOutputDevice.value as string)
               : "Default",
+          audio_source:
+            audioSource.status === "fulfilled"
+              ? (audioSource.value as "microphone" | "system_audio")
+              : "microphone",
         };
 
         set({ settings: mergedSettings, isLoading: false });

@@ -4,6 +4,8 @@
 
 macOS ScreenCaptureKit không gửi audio buffers trong nhiều trường hợp, mặc dù đã cấu hình đúng. Đây là hạn chế của macOS ScreenCaptureKit.
 
+**✅ ĐÃ IMPLEMENT:** BlackHole support đã được thêm vào app. App sẽ tự động thử BlackHole trước, sau đó fallback về ScreenCaptureKit nếu BlackHole không có sẵn.
+
 ## 🔧 Các Giải Pháp Thay Thế
 
 ### 1. **BlackHole** (Khuyến nghị) ⭐
@@ -22,8 +24,10 @@ macOS ScreenCaptureKit không gửi audio buffers trong nhiều trường hợp,
 
 **Cách sử dụng:**
 1. User cài đặt BlackHole: `brew install blackhole-2ch` hoặc download từ [GitHub](https://github.com/ExistentialAudio/BlackHole)
-2. User cấu hình Sound preferences:
+2. **QUAN TRỌNG:** User cấu hình Sound preferences:
    - System Settings > Sound > Output: Chọn "BlackHole 2ch"
+   - Nếu không cấu hình, app sẽ capture silence (RMS = 0)
+3. App tự động detect và sử dụng BlackHole nếu có sẵn
    - System Settings > Sound > Input: Chọn "BlackHole 2ch"
 3. App capture từ BlackHole device như một microphone thông thường
 

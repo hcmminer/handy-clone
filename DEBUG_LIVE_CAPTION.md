@@ -129,6 +129,31 @@ Thêm log ở các điểm quan trọng:
 - Log định kỳ mỗi 100 chunks (thay vì 500) để debug nhanh hơn
 - Log chi tiết về buffer size và số chunks
 
+**⚠️ QUAN TRỌNG: Rebuild SCK Helper Binary**
+
+Sau khi sửa code Swift, **PHẢI** rebuild binary:
+
+```bash
+cd src-tauri
+xcrun swiftc -o bin/macos-audio-capture \
+  src/audio_toolkit/macos_audio_capture.swift \
+  -framework ScreenCaptureKit \
+  -framework CoreMedia \
+  -framework AVFoundation \
+  -framework CoreAudio \
+  -framework AppKit
+```
+
+**Kill old processes để đảm bảo dùng binary mới:**
+```bash
+pkill -f "macos-audio-capture"
+```
+
+**Lưu ý:** 
+- Nếu không rebuild binary, app sẽ vẫn dùng binary cũ và code mới không có hiệu lực
+- Luôn rebuild sau khi sửa Swift code
+- Kill old processes trước khi restart app
+
 **Kết quả:** SCStream start thành công và audio buffers được nhận đúng cách
 
 ---
@@ -263,10 +288,21 @@ tail -100 ~/Library/Logs/com.pais.handy/handy.log | grep -E "LiveCaption.*Event"
 2. **`src-tauri/src/audio_toolkit/macos_audio_capture.swift`**
    - Đổi capture strategy từ display → all applications
    - Thêm debug logs cho delegate callbacks
+   - Thêm logging cho `stream.startCapture()` và error handling
+   - **⚠️ Cần rebuild binary sau khi sửa:**
+     ```bash
+     cd src-tauri
+     xcrun swiftc -o bin/macos-audio-capture \
+       src/audio_toolkit/macos_audio_capture.swift \
+       -framework ScreenCaptureKit -framework CoreMedia \
+       -framework AVFoundation -framework CoreAudio -framework AppKit
+     pkill -f "macos-audio-capture"
+     ```
 
 3. **`src-tauri/src/audio_toolkit/system_audio_macos.rs`**
    - Forward SCK helper logs to frontend
    - Emit log events for debugging
+   - Thêm logging khi nhận data đầu tiên từ helper
 
 ---
 

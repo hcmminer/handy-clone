@@ -51,8 +51,27 @@ function App() {
   }, [settings?.debug_mode, updateSetting]);
 
   const checkOnboardingStatus = async () => {
+    // Wait for Tauri to be ready
+    const waitForTauri = async (): Promise<boolean> => {
+      for (let i = 0; i < 10; i++) {
+        if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    };
+
     // Retry with delay to ensure backend is ready
-    const checkWithRetry = async (retries = 3, delay = 500) => {
+    const checkWithRetry = async (retries = 5, delay = 500) => {
+      // First wait for Tauri to be ready
+      const tauriReady = await waitForTauri();
+      if (!tauriReady) {
+        console.error("Tauri is not available");
+        setShowOnboarding(true);
+        return;
+      }
+
       for (let i = 0; i < retries; i++) {
         try {
           // Always check if they have any models available

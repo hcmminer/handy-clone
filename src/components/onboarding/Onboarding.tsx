@@ -14,8 +14,26 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Wait for Tauri to be ready
+    const waitForTauri = async (): Promise<boolean> => {
+      for (let i = 0; i < 10; i++) {
+        if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+          return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    };
+
     // Retry loading models with delay to ensure backend is ready
-    const loadWithRetry = async (retries = 3, delay = 500) => {
+    const loadWithRetry = async (retries = 5, delay = 500) => {
+      // First wait for Tauri to be ready
+      const tauriReady = await waitForTauri();
+      if (!tauriReady) {
+        setError("Tauri is not available. Please refresh the page.");
+        return;
+      }
+
       for (let i = 0; i < retries; i++) {
         try {
           const models: ModelInfo[] = await invoke("get_available_models");

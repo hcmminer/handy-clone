@@ -381,6 +381,12 @@ impl AudioRecordingManager {
                                                 samples_to_transcribe.len(),
                                                 samples_to_transcribe.len() / 16000,
                                                 accumulated_buffer.len() / 16000);
+                                        
+                                        // Emit log event to frontend
+                                        let _ = app_handle.emit("log-update", format!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept)",
+                                                samples_to_transcribe.len(),
+                                                samples_to_transcribe.len() / 16000,
+                                                accumulated_buffer.len() / 16000));
                                 
                                         // Trigger transcription
                                         let tm = app_handle.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
@@ -400,20 +406,34 @@ impl AudioRecordingManager {
                                         
                                         if !tm.is_model_loaded() {
                                             warn!("Model still not loaded after waiting, skipping transcription");
+                                            let _ = app_handle.emit("log-update", "⚠️ [Auto-transcription] Model still not loaded after waiting, skipping transcription");
                                             continue;
                                         }
                                         
                                         info!("🔄 [Auto-transcription] Starting transcription for {} samples ({}s)", 
                                             samples_to_transcribe.len(),
                                             samples_to_transcribe.len() / 16000);
+                                        
+                                        // Emit log event to frontend
+                                        let _ = app_handle.emit("log-update", format!("🔄 [Auto-transcription] Starting transcription for {} samples ({}s)", 
+                                            samples_to_transcribe.len(),
+                                            samples_to_transcribe.len() / 16000));
+                                        
                                         match tm.transcribe(samples_to_transcribe) {
                                             Ok(transcription) => {
                                                 let trimmed = transcription.trim();
                                                 info!("📝 [Auto-transcription] Raw transcription received (len={}): '{}'", transcription.len(), transcription);
+                                                
+                                                // Emit log event
+                                                let _ = app_handle.emit("log-update", format!("📝 [Auto-transcription] Raw transcription received (len={}): '{}'", transcription.len(), transcription));
+                                                
                                                 // Always log transcription results - this is important!
                                                 if !trimmed.is_empty() && trimmed.len() > 1 {
                                                     // Only process if transcription has meaningful content (more than 1 char)
                                                     info!("🎯 [Auto-transcription] Result (len={}): '{}'", trimmed.len(), trimmed);
+                                                    
+                                                    // Emit log event
+                                                    let _ = app_handle.emit("log-update", format!("🎯 [Auto-transcription] Result (len={}): '{}'", trimmed.len(), trimmed));
                                                     
                                                     // Save to history (async)
                                                     let hm_clone = Arc::clone(&hm);
@@ -432,10 +452,16 @@ impl AudioRecordingManager {
                                                     
                                                     // Emit live caption event to frontend
                                                     info!("📤 [LiveCaption] Emitting event with caption ({} chars): '{}'", trimmed.len(), trimmed);
+                                                    
+                                                    // Emit log event
+                                                    let _ = app_handle.emit("log-update", format!("📤 [LiveCaption] Emitting event with caption ({} chars): '{}'", trimmed.len(), trimmed));
+                                                    
                                                     if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
                                                         error!("❌ [LiveCaption] Failed to emit live-caption-update event: {}", e);
+                                                        let _ = app_handle.emit("log-update", format!("❌ [LiveCaption] Failed to emit live-caption-update event: {}", e));
                                                     } else {
                                                         info!("✅ [LiveCaption] Event emitted successfully");
+                                                        let _ = app_handle.emit("log-update", "✅ [LiveCaption] Event emitted successfully");
                                                     }
                                                     
                                                     // Paste the transcription

@@ -26,10 +26,12 @@ export default function LiveCaption({ enabled = true }: LiveCaptionProps) {
     const unlisten = listen<string>("live-caption-update", (event) => {
       eventCount++;
       const newCaption = event.payload.trim();
-      console.log(`🎯 [LiveCaption] Event #${eventCount} received, payload length: ${newCaption.length}, preview: "${newCaption.substring(0, 50)}${newCaption.length > 50 ? '...' : ''}"`);
+      const logMsg = `🎯 [LiveCaption] Event #${eventCount} received, payload length: ${newCaption.length}, preview: "${newCaption.substring(0, 50)}${newCaption.length > 50 ? '...' : ''}"`;
+      console.log(logMsg);
       
       if (newCaption && newCaption.length > 1) {
-        console.log(`✅ [LiveCaption] Setting caption (${newCaption.length} chars): "${newCaption}"`);
+        const successMsg = `✅ [LiveCaption] Setting caption (${newCaption.length} chars): "${newCaption}"`;
+        console.log(successMsg);
         setCaption(newCaption);
         setIsVisible(true);
         setIsListening(false);
@@ -37,12 +39,14 @@ export default function LiveCaption({ enabled = true }: LiveCaptionProps) {
         // Auto-hide after 5 seconds of no new caption
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
-          console.log("⏸️ [LiveCaption] Hiding caption after 5s timeout");
+          const hideMsg = "⏸️ [LiveCaption] Hiding caption after 5s timeout";
+          console.log(hideMsg);
           setIsVisible(false);
           setIsListening(true); // Show "Đang nghe..." again
         }, 5000);
       } else {
-        console.warn(`⚠️ [LiveCaption] Received empty or too short caption (length: ${newCaption.length})`);
+        const warnMsg = `⚠️ [LiveCaption] Received empty or too short caption (length: ${newCaption.length})`;
+        console.warn(warnMsg);
       }
     });
 

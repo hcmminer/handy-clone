@@ -168,11 +168,23 @@ func runCapture() {
                 content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             } catch {
                 log("❌ PERMISSION DENIED: \(error.localizedDescription)")
-                log("⚠️  ACTION REQUIRED: Please grant Screen Recording permission:")
-                log("   1. Open System Settings > Privacy & Security > Screen Recording")
-                log("   2. Enable permission for 'Terminal' (if running via bun tauri dev)")
-                log("   3. Or enable permission for 'Handy' (if running built app)")
-                log("   4. Restart the application after granting permission")
+                // Show alert dialog on main thread
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Screen Recording Permission Required"
+                    alert.informativeText = "Handy needs Screen Recording permission to capture system audio.\n\nPlease:\n1. Open System Settings > Privacy & Security > Screen Recording\n2. Enable permission for this app\n3. Restart the application"
+                    alert.alertStyle = .critical
+                    alert.addButton(withTitle: "Open System Settings")
+                    alert.addButton(withTitle: "Quit")
+                    
+                    let response = alert.runModal()
+                    if response == .alertFirstButtonReturn {
+                        // Open System Settings to Screen Recording
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
                 exit(1)
             }
             
@@ -204,10 +216,18 @@ func runCapture() {
                 log("Note: Audio capture may work better from the display where audio is playing")
             }
             
-            // Try capturing from display directly (this should capture system audio)
-            // Note: On macOS, system audio capture may require capturing from the display
-            // Use empty applications list to capture from display directly
-            let filter = SCContentFilter(display: display, including: [], exceptingWindows: [])
+            // Try capturing from ALL shareable applications to maximize audio capture
+            // ScreenCaptureKit can capture audio from applications better than from display
+            var filter: SCContentFilter
+            if shareableApps.count > 0 {
+                // Capture from all applications to get system audio
+                log("🎯 Capturing from \(shareableApps.count) applications: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
+                filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
+            } else {
+                // Fallback: capture from display directly
+                log("⚠️ No applications found, capturing from display directly (may not capture audio)")
+                filter = SCContentFilter(display: display, including: [], exceptingWindows: [])
+            }
             
             let config = SCStreamConfiguration()
             config.capturesAudio = true

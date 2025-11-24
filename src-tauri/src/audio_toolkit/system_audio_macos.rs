@@ -267,8 +267,17 @@ impl MacOSSystemAudio {
             // Log periodically (every 1000 callbacks = ~20 seconds at 48kHz)
             if callback_count % 1000 == 0 {
                 let buf_size = buf.len();
-                log::info!("📊 [BlackHole] Callback #{}: Buffer size: {} samples ({}s)", 
-                    callback_count, buf_size, buf_size as f32 / 48000.0);
+                // Calculate RMS of recent samples for logging
+                let recent_samples: Vec<f32> = buf.iter().rev().take(48000).cloned().collect(); // Last 1 second
+                let rms = if !recent_samples.is_empty() {
+                    let sum_sq: f32 = recent_samples.iter().map(|&s| s * s).sum();
+                    (sum_sq / recent_samples.len() as f32).sqrt()
+                } else {
+                    0.0
+                };
+                let max_amp = recent_samples.iter().map(|&s| s.abs()).fold(0.0f32, |a, b| a.max(b));
+                log::info!("📊 [BlackHole] Callback #{}: Buffer size: {} samples ({}s), RMS: {:.6}, Max: {:.6}", 
+                    callback_count, buf_size, buf_size as f32 / 48000.0, rms, max_amp);
             }
         };
         
@@ -296,6 +305,18 @@ impl SystemAudioCapture for MacOSSystemAudio {
                 }
                 Ok(false) => {
                     log::warn!("⚠️  BlackHole started but no audio detected. Falling back to ScreenCaptureKit...");
+                    
+                    // Try to open System Settings to help user configure
+                    log::info!("💡 [BlackHole] Attempting to open System Settings > Sound...");
+                    let _ = std::process::Command::new("open")
+                        .args(["-b", "com.apple.systempreferences", "com.apple.preference.sound"])
+                        .output();
+                    
+                    // Emit log event to frontend
+                    let _ = self.app_handle.emit("log-update", format!(
+                        "⚠️ [BlackHole] No audio detected. Please set Sound Output to 'BlackHole 2ch' in System Settings > Sound > Output"
+                    ));
+                    
                     // Stop BlackHole before trying ScreenCaptureKit
                     let _ = self.stop_capture();
                     self.is_capturing = false;

@@ -57,6 +57,7 @@
   - **Auto-fallback:** ✅ App tự động check audio sau 2s, nếu silence thì tự động fallback sang ScreenCaptureKit
   - **Auto-open System Settings:** ✅ App tự động mở System Settings > Sound khi BlackHole không có audio để giúp user cấu hình
   - **Enhanced logging:** ✅ Thêm RMS/Max logging trong periodic callbacks để monitor audio quality
+  - **Continuous monitoring:** ✅ BlackHole tiếp tục chạy và monitor liên tục - sẽ tự động detect audio khi user cấu hình Sound Output (không cần restart app)
   - ✅ Thêm logging chi tiết để debug (đã thêm - xác nhận vấn đề)
   - ✅ Xác nhận `streamDidStart` được gọi (đã xác nhận - vẫn không có audio buffers)
   - ⚠️ **Cần xem xét cách khác để capture system audio:**

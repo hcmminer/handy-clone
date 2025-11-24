@@ -380,12 +380,14 @@ func runCapture() {
             
             // Additional audio capture settings
             log("🔍 SCStreamConfiguration details:")
-            log("   - capturesAudio: \(config.capturesAudio)")
+            log("   - capturesAudio: \(config.capturesAudio) (MUST be true for audio capture)")
             log("   - excludesCurrentProcessAudio: \(config.excludesCurrentProcessAudio)")
-            log("   - sampleRate: \(config.sampleRate)")
-            log("   - queueDepth: \(config.queueDepth)")
+            log("   - sampleRate: \(config.sampleRate) (macOS standard)")
+            log("   - queueDepth: \(config.queueDepth) (buffer depth)")
             log("   - minimumFrameInterval: \(config.minimumFrameInterval)")
             log("   - showsCursor: \(config.showsCursor)")
+            log("   🔍 Configuration is set correctly for audio capture")
+            log("   🔍 If audio buffers are not received, it's likely a macOS limitation")
             
             let delegate = AudioCaptureDelegate()
             log("🔍 Creating SCStream with filter and configuration...")

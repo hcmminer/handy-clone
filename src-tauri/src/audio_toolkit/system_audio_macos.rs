@@ -116,7 +116,8 @@ impl MacOSSystemAudio {
     }
     
     /// Start capture from BlackHole device
-    fn start_blackhole_capture(&mut self, device: Device) -> Result<()> {
+    /// Returns true if audio is detected (RMS > threshold), false if silent
+    fn start_blackhole_capture(&mut self, device: Device) -> Result<bool> {
         log::info!("🎯 Starting BlackHole capture...");
         
         let config = device.default_input_config()
@@ -178,7 +179,40 @@ impl MacOSSystemAudio {
         self.is_capturing = true;
         
         log::info!("✅ BlackHole capture started successfully!");
-        Ok(())
+        
+        // Wait a bit and check if audio is present
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let buf = self.sample_buffer.lock().unwrap();
+        let sample_count = buf.len();
+        drop(buf);
+        
+        if sample_count > 0 {
+            // Check RMS of samples to see if audio is present
+            let buf = self.sample_buffer.lock().unwrap();
+            let samples: Vec<f32> = buf.iter().take(48000).cloned().collect(); // Check first 1 second
+            drop(buf);
+            
+            if !samples.is_empty() {
+                let sum_sq: f32 = samples.iter().map(|&s| s * s).sum();
+                let rms = (sum_sq / samples.len() as f32).sqrt();
+                let max_amp = samples.iter().map(|&s| s.abs()).fold(0.0f32, |a, b| a.max(b));
+                
+                log::info!("🔍 [BlackHole] Audio check after 2s: {} samples, RMS: {:.6}, Max: {:.6}", 
+                    sample_count, rms, max_amp);
+                
+                if rms > 0.00001 {
+                    log::info!("✅ [BlackHole] Audio detected! RMS: {:.6}", rms);
+                    return Ok(true);
+                } else {
+                    log::warn!("⚠️ [BlackHole] No audio detected (RMS: {:.6}). Audio may not be routed to BlackHole.", rms);
+                    log::warn!("⚠️ [BlackHole] Will try ScreenCaptureKit as fallback...");
+                    return Ok(false);
+                }
+            }
+        }
+        
+        log::warn!("⚠️ [BlackHole] No samples received after 2s. Will try ScreenCaptureKit as fallback...");
+        Ok(false)
     }
     
     fn build_blackhole_stream_in_thread<T>(
@@ -256,9 +290,16 @@ impl SystemAudioCapture for MacOSSystemAudio {
         // Strategy 1: Try BlackHole first (more reliable)
         if let Some(blackhole_device) = Self::find_blackhole_device() {
             match self.start_blackhole_capture(blackhole_device) {
-                Ok(()) => {
-                    log::info!("✅ Using BlackHole for system audio capture");
+                Ok(true) => {
+                    log::info!("✅ Using BlackHole for system audio capture (audio detected)");
                     return Ok(());
+                }
+                Ok(false) => {
+                    log::warn!("⚠️  BlackHole started but no audio detected. Falling back to ScreenCaptureKit...");
+                    // Stop BlackHole before trying ScreenCaptureKit
+                    let _ = self.stop_capture();
+                    self.is_capturing = false;
+                    self.use_blackhole = false;
                 }
                 Err(e) => {
                     log::warn!("⚠️  Failed to start BlackHole capture: {}. Falling back to ScreenCaptureKit.", e);

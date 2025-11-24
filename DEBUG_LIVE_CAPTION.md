@@ -48,6 +48,12 @@
 - **Giải pháp đã thử nghiệm:**
   - ✅ Thử application capture với Chrome trong shareableApps (đã thử - không hoạt động)
   - ✅ Thử display capture (đã thử - không hoạt động)
+- **Giải pháp thay thế:** ✅ **BlackHole Virtual Audio Device** (Đã implement)
+  - App tự động detect và sử dụng BlackHole nếu có sẵn
+  - BlackHole hoạt động tốt, capture audio samples thành công
+  - **Vấn đề hiện tại:** Default output device không phải BlackHole → audio không được route qua BlackHole → capture silence (RMS: 0.000000)
+  - **Giải pháp:** User cần cấu hình Sound Output sang "BlackHole 2ch" trong System Settings
+  - **Lưu ý:** macOS không cho phép programmatic set output device, cần cấu hình thủ công
   - ✅ Thêm logging chi tiết để debug (đã thêm - xác nhận vấn đề)
   - ✅ Xác nhận `streamDidStart` được gọi (đã xác nhận - vẫn không có audio buffers)
   - ⚠️ **Cần xem xét cách khác để capture system audio:**

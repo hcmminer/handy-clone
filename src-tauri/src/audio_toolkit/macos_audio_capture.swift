@@ -46,10 +46,18 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         // Log ALL buffer types received for debugging
         if nonAudioCount == 0 && bufferCount == 0 {
-            log("🔍 First sample buffer received - Type: \(type), rawValue: \(type.rawValue)")
+            log("🔍🔍🔍 FIRST SAMPLE BUFFER RECEIVED! 🔍🔍🔍")
+            log("   🔍 Type: \(type)")
+            log("   🔍 Type rawValue: \(type.rawValue)")
             log("   🔍 SCStreamOutputType.audio rawValue: \(SCStreamOutputType.audio.rawValue)")
             log("   🔍 SCStreamOutputType.screen rawValue: \(SCStreamOutputType.screen.rawValue)")
             log("   🔍 Comparing: type == .audio? \(type == .audio)")
+            log("   🔍 Comparing: type == .screen? \(type == .screen)")
+            log("   🔍 Sample buffer: \(sampleBuffer)")
+            let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+            log("   🔍 Number of samples in buffer: \(numSamples)")
+            let duration = CMSampleBufferGetDuration(sampleBuffer)
+            log("   🔍 Duration: \(CMTimeGetSeconds(duration))s")
         }
         
         if type != .audio {
@@ -168,8 +176,8 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
         // Convert audio to Float32 and write to stdout
         withUnsafePointer(to: &audioBufferListPtr.pointee.mBuffers) { buffersPtr in
             let buffers = UnsafeBufferPointer(start: buffersPtr, count: Int(audioBufferList.mNumberBuffers))
-            
-            for buffer in buffers {
+        
+        for buffer in buffers {
             
             guard let data = buffer.mData else { continue }
             let byteCount = Int(buffer.mDataByteSize)
@@ -403,15 +411,21 @@ func runCapture() {
             
             // Add stream output BEFORE starting capture
             log("🔍 Adding stream output for audio type...")
+            log("   🔍 SCStreamOutputType.audio: \(SCStreamOutputType.audio)")
+            log("   🔍 SCStreamOutputType.audio.rawValue: \(SCStreamOutputType.audio.rawValue)")
             try stream.addStreamOutput(delegate, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio-queue"))
             log("✅ Added stream output for audio type")
             log("   🔍 Audio queue: audio-queue")
+            log("   🔍 Delegate will receive audio buffers via stream(_:didOutputSampleBuffer:of:)")
             
             // Also add stream output for screen content to see if stream is working at all
             log("🔍 Adding stream output for screen type...")
+            log("   🔍 SCStreamOutputType.screen: \(SCStreamOutputType.screen)")
+            log("   🔍 SCStreamOutputType.screen.rawValue: \(SCStreamOutputType.screen.rawValue)")
             try stream.addStreamOutput(delegate, type: .screen, sampleHandlerQueue: DispatchQueue(label: "screen-queue"))
             log("✅ Added stream output for screen type (to verify stream is working)")
             log("   🔍 Screen queue: screen-queue")
+            log("   🔍 Delegate will receive screen buffers via stream(_:didOutputSampleBuffer:of:)")
             
             log("🚀 Starting capture...")
             log("📋 About to call stream.startCapture()...")
@@ -422,7 +436,7 @@ func runCapture() {
                 // Add timeout to detect if startCapture is blocking
                 let startTime = Date()
                 log("🔍 Calling stream.startCapture() now...")
-                try await stream.startCapture()
+            try await stream.startCapture()
                 let elapsed = Date().timeIntervalSince(startTime)
                 log("✅ Capture started successfully - stream.startCapture() returned (took \(String(format: "%.2f", elapsed))s)")
                 log("   🔍 Stream state after start: \(stream)")

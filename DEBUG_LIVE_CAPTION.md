@@ -32,22 +32,25 @@
   - Kill old processes để force sử dụng binary mới
   - Thêm logging khi Rust nhận data đầu tiên từ helper
 
-### 4. **Vấn đề macOS ScreenCaptureKit không gửi Audio Buffers** (Hạn chế của macOS)
+### 4. **Vấn đề macOS ScreenCaptureKit không gửi Audio Buffers** (Hạn chế của macOS) ⚠️
 - **Vấn đề:** SCStream chỉ gửi screen buffers (rawValue: 0) nhưng không gửi audio buffers (rawValue: 1), ngay cả khi:
   - `config.capturesAudio = true`
   - Application capture với Chrome trong shareableApps
   - Display capture
   - Hệ thống đang phát âm thanh liên tục
+  - `streamDidStart` được gọi (SCStream đã active)
 - **Triệu chứng:** 
   - `bufferCount: 0, nonAudioCount: 3+` - SCStream gửi screen buffers nhưng không gửi audio buffers
   - `SCStreamOutputType.audio rawValue: 1` nhưng chỉ nhận được `rawValue: 0` (screen buffers)
   - `type == .audio? false` - Không có audio buffers được gửi
+  - `streamDidStart` được gọi nhưng vẫn không có audio buffers
 - **Nguyên nhân:** Đây là hạn chế của macOS ScreenCaptureKit - không phải lỗi code
-- **Giải pháp thử nghiệm:**
+- **Giải pháp đã thử nghiệm:**
   - ✅ Thử application capture với Chrome trong shareableApps (đã thử - không hoạt động)
   - ✅ Thử display capture (đã thử - không hoạt động)
   - ✅ Thêm logging chi tiết để debug (đã thêm - xác nhận vấn đề)
-  - ⚠️ **Cần kiểm tra thêm:**
+  - ✅ Xác nhận `streamDidStart` được gọi (đã xác nhận - vẫn không có audio buffers)
+  - ⚠️ **Cần xem xét cách khác để capture system audio:**
     - Có app khác đang capture screen/audio không? (conflict)
     - macOS version và ScreenCaptureKit capabilities
     - System Settings > Privacy & Security > Screen Recording

@@ -427,8 +427,11 @@ impl AudioRecordingManager {
                                                     });
                                                     
                                                     // Emit live caption event to frontend
+                                                    info!("📤 [LiveCaption] Emitting event with caption ({} chars): '{}'", trimmed.len(), trimmed);
                                                     if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
-                                                        error!("Failed to emit live-caption-update event: {}", e);
+                                                        error!("❌ [LiveCaption] Failed to emit live-caption-update event: {}", e);
+                                                    } else {
+                                                        info!("✅ [LiveCaption] Event emitted successfully");
                                                     }
                                                     
                                                     // Paste the transcription

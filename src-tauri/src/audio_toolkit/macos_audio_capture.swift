@@ -34,10 +34,12 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
     }
     
     func streamDidStart(_ stream: SCStream) {
-        log("✅ SCStreamDelegate: streamDidStart called - stream is active!")
+        log("✅✅✅ SCStreamDelegate: streamDidStart called - stream is active! ✅✅✅")
         log("   📊 Delegate state: bufferCount=\(bufferCount), nonAudioCount=\(nonAudioCount)")
         log("   💡 Stream is now active and should start receiving buffers")
         log("   🔍 Stream object: \(stream)")
+        log("   🔍 This delegate method confirms SCStream is fully active")
+        log("   🔍 Audio buffers should start arriving soon if macOS supports it")
     }
     
     var bufferCount = 0
@@ -450,6 +452,9 @@ func runCapture() {
                 log("💡 Debug: If no callbacks received, SCStream may not be sending audio")
                 log("💡 Debug: If you see non-audio buffers, stream is working but not sending audio")
                 log("💡 Debug: Will log every 30 seconds if no audio buffers received")
+                log("🔍 CRITICAL: If streamDidStart is NOT called, SCStream may not be fully active")
+                log("🔍 CRITICAL: If only screen buffers (rawValue: 0) are received, macOS may not support audio capture in this configuration")
+                log("🔍 CRITICAL: Audio buffers should have rawValue: 1, but we're only seeing rawValue: 0")
             } catch {
                 log("❌ Failed to start capture: \(error.localizedDescription)")
                 log("Error details: \(error)")
@@ -468,6 +473,16 @@ func runCapture() {
             // Log periodically only if no audio received (reduce log spam)
             Task {
                 var checkCount = 0
+                var _ = false // streamDidStartCalled - not used but kept for future reference
+                // Check if streamDidStart was called after 2 seconds
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                if delegate.bufferCount == 0 && delegate.nonAudioCount == 0 {
+                    log("⚠️  After 2 seconds: No buffers received yet (bufferCount=0, nonAudioCount=0)")
+                    log("   🔍 This could mean:")
+                    log("   1. streamDidStart has not been called yet (SCStream not fully active)")
+                    log("   2. SCStream is not sending any buffers at all")
+                    log("   3. There's a delay before buffers start arriving")
+                }
                 while true {
                     try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
                     checkCount += 1

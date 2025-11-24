@@ -13,6 +13,23 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         log("❌ Stream stopped with error: \(error.localizedDescription)")
         log("Error details: \(error)")
+        if let nsError = error as NSError? {
+            log("🔍 Error domain: \(nsError.domain)")
+            log("🔍 Error code: \(nsError.code)")
+            log("🔍 Error userInfo: \(nsError.userInfo)")
+            
+            // Error -3821: Stream was stopped by the system
+            if nsError.code == -3821 {
+                log("⚠️  Error -3821: Stream was stopped by macOS system")
+                log("   💡 Possible causes:")
+                log("   1. Another app is capturing screen/audio (conflict)")
+                log("   2. System Settings > Privacy & Security > Screen Recording permission issue")
+                log("   3. macOS security policy blocking the capture")
+                log("   4. Display sleep or system state change")
+                log("   💡 Try: 1) Close other screen recording apps, 2) Check permissions, 3) Restart app")
+            }
+        }
+        log("📊 Final state: bufferCount=\(bufferCount), nonAudioCount=\(nonAudioCount)")
         exit(1)
     }
     
@@ -20,36 +37,58 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
         log("✅ SCStreamDelegate: streamDidStart called - stream is active!")
         log("   📊 Delegate state: bufferCount=\(bufferCount), nonAudioCount=\(nonAudioCount)")
         log("   💡 Stream is now active and should start receiving buffers")
+        log("   🔍 Stream object: \(stream)")
     }
     
     var bufferCount = 0
     var nonAudioCount = 0
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        // Log ALL buffer types received for debugging
+        if nonAudioCount == 0 && bufferCount == 0 {
+            log("🔍 First sample buffer received - Type: \(type), rawValue: \(type.rawValue)")
+            log("   🔍 SCStreamOutputType.audio rawValue: \(SCStreamOutputType.audio.rawValue)")
+            log("   🔍 SCStreamOutputType.screen rawValue: \(SCStreamOutputType.screen.rawValue)")
+            log("   🔍 Comparing: type == .audio? \(type == .audio)")
+        }
+        
         if type != .audio {
             nonAudioCount += 1
             if nonAudioCount == 1 {
                 log("⚠️ WARNING: Received non-audio sample buffer (type: \(type.rawValue))")
+                log("   🔍 Type rawValue: \(type.rawValue)")
+                log("   🔍 Type description: \(type)")
+                log("   🔍 SCStreamOutputType.audio rawValue: \(SCStreamOutputType.audio.rawValue)")
                 log("   This means SCStream is working but not sending audio buffers")
                 log("   💡 This is a known macOS limitation - audio capture may not work from all sources")
                 log("   💡 Try: 1) Ensure audio is playing from Chrome, 2) Try capturing from display instead of apps")
             }
-            // Log every 50 non-audio buffers to confirm stream is working (more frequent for debugging)
-            if nonAudioCount % 50 == 0 {
+            // Log every 5 non-audio buffers for debugging
+            if nonAudioCount % 5 == 0 {
                 log("   📊 Stream status: \(nonAudioCount) non-audio buffers, \(bufferCount) audio buffers")
             }
             return
         }
         
+        // AUDIO BUFFER RECEIVED!
+        log("🎵🎵🎵 AUDIO BUFFER RECEIVED! 🎵🎵🎵")
+        log("   Type: \(type), rawValue: \(type.rawValue)")
+        log("   bufferCount will be: \(bufferCount + 1)")
+        
         bufferCount += 1
         if bufferCount == 1 {
-            log("✅ First audio buffer received!")
+            log("✅✅✅ FIRST AUDIO BUFFER RECEIVED! ✅✅✅")
+            log("   🎉 Audio capture is WORKING!")
             log("   - Buffer count: \(bufferCount)")
             log("   - Non-audio buffers received: \(nonAudioCount)")
             log("   🎉 Audio capture is working! Buffers will be sent to Rust now.")
         }
-        // Log more frequently for debugging (every 100 buffers instead of 500)
-        if bufferCount % 100 == 0 {
+        // Log first 10 buffers for debugging
+        if bufferCount <= 10 {
+            log("📊 Audio buffer #\(bufferCount) received")
+        }
+        // Log every 100 buffers after that
+        if bufferCount > 10 && bufferCount % 100 == 0 {
             log("📊 Received \(bufferCount) audio buffers (still receiving audio)")
         }
         
@@ -299,14 +338,26 @@ func runCapture() {
             // Strategy 3: Fallback to display
             var filter: SCContentFilter
             
-            // Strategy 1: Try capturing from all applications (most reliable for system audio)
-            // Display capture often doesn't send audio buffers, but application capture does
-            if shareableApps.count > 0 {
-                log("🎯 Strategy 1: Capturing from ALL \(shareableApps.count) applications (most reliable for system audio)")
+            // Strategy: Try application capture first (was successful at 18:08)
+            // If Chrome is in shareableApps, application capture should work
+            // Display capture often doesn't send audio buffers on macOS
+            let hasChrome = shareableApps.contains { app in
+                app.applicationName.contains("Chrome") || app.applicationName.contains("Google Chrome")
+            }
+            
+            if shareableApps.count > 0 && hasChrome {
+                log("🎯 Strategy 1: Application capture with Chrome (was successful before)")
+                log("   💡 Chrome detected in shareableApps - application capture should work")
+                log("   💡 Applications: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
+                filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
+            } else if shareableApps.count > 0 {
+                log("🎯 Strategy 2: Application capture without Chrome (Chrome not in shareableApps)")
+                log("   ⚠️  Chrome not detected, but trying application capture anyway")
+                log("   💡 Applications: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
                 filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
             } else {
-                // Strategy 2: Fallback to display if no applications
-                log("🎯 Strategy 2: Fallback - Capturing from display directly")
+                log("🎯 Strategy 3: Display capture (fallback - no shareable apps)")
+                log("   ⚠️  No shareable apps found, using display capture as fallback")
                 filter = SCContentFilter(display: display, excludingWindows: [])
             }
             
@@ -319,14 +370,27 @@ func runCapture() {
             config.queueDepth = 5  // Increase buffer depth
             config.minimumFrameInterval = CMTime(value: 1, timescale: 60)  // 60 FPS
             
-            let delegate = AudioCaptureDelegate()
-            let stream = SCStream(filter: filter, configuration: config, delegate: delegate)
-            
-            log("📋 Stream configuration:")
+            // Additional audio capture settings
+            log("🔍 SCStreamConfiguration details:")
             log("   - capturesAudio: \(config.capturesAudio)")
             log("   - excludesCurrentProcessAudio: \(config.excludesCurrentProcessAudio)")
             log("   - sampleRate: \(config.sampleRate)")
             log("   - queueDepth: \(config.queueDepth)")
+            log("   - minimumFrameInterval: \(config.minimumFrameInterval)")
+            log("   - showsCursor: \(config.showsCursor)")
+            
+            let delegate = AudioCaptureDelegate()
+            log("🔍 Creating SCStream with filter and configuration...")
+            log("   - Filter type: \(filter)")
+            log("   - Config capturesAudio: \(config.capturesAudio)")
+            log("   - Config excludesCurrentProcessAudio: \(config.excludesCurrentProcessAudio)")
+            log("   - Config sampleRate: \(config.sampleRate)")
+            log("   - Config queueDepth: \(config.queueDepth)")
+            
+            let stream = SCStream(filter: filter, configuration: config, delegate: delegate)
+            log("✅ SCStream created successfully")
+            log("   🔍 Stream object: \(stream)")
+            log("   🔍 Delegate object: \(delegate)")
             
             log("📋 Content filter:")
             if shareableApps.count > 0 {
@@ -338,23 +402,33 @@ func runCapture() {
             log("   - display: \(display.displayID)")
             
             // Add stream output BEFORE starting capture
+            log("🔍 Adding stream output for audio type...")
             try stream.addStreamOutput(delegate, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio-queue"))
             log("✅ Added stream output for audio type")
+            log("   🔍 Audio queue: audio-queue")
             
             // Also add stream output for screen content to see if stream is working at all
+            log("🔍 Adding stream output for screen type...")
             try stream.addStreamOutput(delegate, type: .screen, sampleHandlerQueue: DispatchQueue(label: "screen-queue"))
             log("✅ Added stream output for screen type (to verify stream is working)")
+            log("   🔍 Screen queue: screen-queue")
             
-            log("Starting capture...")
+            log("🚀 Starting capture...")
             log("📋 About to call stream.startCapture()...")
+            log("   🔍 Stream state before start: \(stream)")
+            log("   🔍 Delegate state before start: bufferCount=\(delegate.bufferCount), nonAudioCount=\(delegate.nonAudioCount)")
             log("⏳ This may take a moment...")
             do {
                 // Add timeout to detect if startCapture is blocking
                 let startTime = Date()
+                log("🔍 Calling stream.startCapture() now...")
                 try await stream.startCapture()
                 let elapsed = Date().timeIntervalSince(startTime)
                 log("✅ Capture started successfully - stream.startCapture() returned (took \(String(format: "%.2f", elapsed))s)")
+                log("   🔍 Stream state after start: \(stream)")
                 log("⏳ Waiting for delegate callbacks...")
+                log("   🔍 Waiting for streamDidStart delegate method...")
+                log("   🔍 Waiting for audio/screen sample buffers...")
                 log("💡 IMPORTANT: Please make sure audio is playing from Chrome or another app")
                 log("💡 Debug: Delegate will log when streamDidStart is called")
                 log("💡 Debug: If no callbacks received, SCStream may not be sending audio")

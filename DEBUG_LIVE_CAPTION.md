@@ -32,7 +32,28 @@
   - Kill old processes để force sử dụng binary mới
   - Thêm logging khi Rust nhận data đầu tiên từ helper
 
-### 4. **Vấn đề Log không đủ chi tiết**
+### 4. **Vấn đề macOS ScreenCaptureKit không gửi Audio Buffers** (Hạn chế của macOS)
+- **Vấn đề:** SCStream chỉ gửi screen buffers (rawValue: 0) nhưng không gửi audio buffers (rawValue: 1), ngay cả khi:
+  - `config.capturesAudio = true`
+  - Application capture với Chrome trong shareableApps
+  - Display capture
+  - Hệ thống đang phát âm thanh liên tục
+- **Triệu chứng:** 
+  - `bufferCount: 0, nonAudioCount: 3+` - SCStream gửi screen buffers nhưng không gửi audio buffers
+  - `SCStreamOutputType.audio rawValue: 1` nhưng chỉ nhận được `rawValue: 0` (screen buffers)
+  - `type == .audio? false` - Không có audio buffers được gửi
+- **Nguyên nhân:** Đây là hạn chế của macOS ScreenCaptureKit - không phải lỗi code
+- **Giải pháp thử nghiệm:**
+  - ✅ Thử application capture với Chrome trong shareableApps (đã thử - không hoạt động)
+  - ✅ Thử display capture (đã thử - không hoạt động)
+  - ✅ Thêm logging chi tiết để debug (đã thêm - xác nhận vấn đề)
+  - ⚠️ **Cần kiểm tra thêm:**
+    - Có app khác đang capture screen/audio không? (conflict)
+    - macOS version và ScreenCaptureKit capabilities
+    - System Settings > Privacy & Security > Screen Recording
+    - Restart Chrome hoặc macOS
+
+### 5. **Vấn đề Log không đủ chi tiết**
 - **Vấn đề:** Không biết được transcription pipeline đang dừng ở bước nào
 - **Giải pháp:** Thêm log chi tiết ở mỗi bước:
   - Resampler initialization
@@ -154,7 +175,14 @@ pkill -f "macos-audio-capture"
 - Luôn rebuild sau khi sửa Swift code
 - Kill old processes trước khi restart app
 
-**Kết quả:** SCStream start thành công và audio buffers được nhận đúng cách
+**Kết quả:** SCStream start thành công và audio buffers được nhận đúng cách (trong lần chạy thành công ở 18:08)
+
+**⚠️ Lưu ý:** Hiện tại (18:36+) SCStream không gửi audio buffers ngay cả khi:
+- Chrome có trong shareableApps
+- Application capture được sử dụng
+- Hệ thống đang phát âm thanh liên tục
+
+Đây có thể là hạn chế của macOS ScreenCaptureKit hoặc cần restart Chrome/macOS.
 
 ---
 

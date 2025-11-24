@@ -345,19 +345,14 @@ func runCapture() {
                     log("   💡 Using display ID: \(display.displayID) as base")
                     filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
                 } else {
-                    log("   ⚠️  No display found, but trying application capture anyway")
-                    log("   💡 This may work if applications are shareable")
-                    // Try to create filter with applications only (may not work without display)
-                    // Fallback: try to get any available display or use main display
-                    if let mainDisplay = SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true).displays.first {
-                        log("   💡 Found main display via alternative method: \(mainDisplay.displayID)")
-                        filter = SCContentFilter(display: mainDisplay, including: shareableApps, exceptingWindows: [])
-                    } else {
-                        log("❌ Cannot create filter: No display and cannot get main display")
-                        log("💡 This may happen if app is running headless or no display is available")
-                        log("💡 Please ensure a display is connected and try again")
-                        exit(1)
-                    }
+                    log("❌ Cannot create filter: No display found")
+                    log("💡 Application capture requires a display to work")
+                    log("💡 This may happen if:")
+                    log("   1. App is running headless (no display connected)")
+                    log("   2. Screen Recording permission is not fully granted")
+                    log("   3. No display is available in the system")
+                    log("💡 Please ensure a display is connected and try again")
+                    exit(1)
                 }
             } else if let display = content.displays.first {
                 // Fallback: Try display capture if no applications

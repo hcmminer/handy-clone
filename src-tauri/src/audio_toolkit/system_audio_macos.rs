@@ -51,17 +51,25 @@ impl MacOSSystemAudio {
     /// Try to find BlackHole device
     fn find_blackhole_device() -> Option<Device> {
         let host = crate::audio_toolkit::get_cpal_host();
+        log::info!("🔍 [BlackHole] Enumerating input devices...");
+        
         if let Ok(devices) = host.input_devices() {
+            let mut device_list = Vec::new();
             for device in devices {
                 if let Ok(name) = device.name() {
+                    device_list.push(name.clone());
+                    log::info!("🔍 [BlackHole] Found input device: {}", name);
                     if name.contains("BlackHole") || name.contains("blackhole") {
-                        log::info!("✅ Found BlackHole device: {}", name);
+                        log::info!("✅ [BlackHole] Found BlackHole device: {}", name);
                         return Some(device);
                     }
                 }
             }
+            log::info!("📋 [BlackHole] All input devices: {:?}", device_list);
+        } else {
+            log::warn!("⚠️ [BlackHole] Failed to enumerate input devices");
         }
-        log::info!("⚠️  BlackHole device not found. Will try ScreenCaptureKit.");
+        log::info!("⚠️ [BlackHole] BlackHole device not found. Will try ScreenCaptureKit.");
         None
     }
     
@@ -141,8 +149,30 @@ impl MacOSSystemAudio {
         T: Sample + SizedSample + Send + 'static,
         f32: cpal::FromSample<T>,
     {
+        let mut callback_count = 0u64;
         let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
+            callback_count += 1;
             let mut buf = buffer.lock().unwrap();
+            
+            // Calculate RMS for first few callbacks to check if audio is present
+            if callback_count <= 5 {
+                let rms = if data.is_empty() {
+                    0.0
+                } else {
+                    let sum_sq: f32 = data.iter()
+                        .map(|&s| {
+                            let f: f32 = s.to_sample();
+                            f * f
+                        })
+                        .sum();
+                    (sum_sq / data.len() as f32).sqrt()
+                };
+                let max_amp = data.iter()
+                    .map(|&s| s.to_sample::<f32>().abs())
+                    .fold(0.0f32, |a, b| a.max(b));
+                log::info!("🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.6}, Max: {:.6}", 
+                    callback_count, data.len(), rms, max_amp);
+            }
             
             if channels == 1 {
                 buf.extend(data.iter().map(|&sample| sample.to_sample::<f32>()));
@@ -156,6 +186,13 @@ impl MacOSSystemAudio {
                         / channels as f32;
                     buf.push_back(mono_sample);
                 }
+            }
+            
+            // Log periodically (every 1000 callbacks = ~20 seconds at 48kHz)
+            if callback_count % 1000 == 0 {
+                let buf_size = buf.len();
+                log::info!("📊 [BlackHole] Callback #{}: Buffer size: {} samples ({}s)", 
+                    callback_count, buf_size, buf_size as f32 / 48000.0);
             }
         };
         

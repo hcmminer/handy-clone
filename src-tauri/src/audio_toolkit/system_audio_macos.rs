@@ -79,6 +79,15 @@ impl MacOSSystemAudio {
                     if !name.contains("BlackHole") && !name.contains("blackhole") {
                         log::warn!("⚠️ [BlackHole] Default output is NOT BlackHole (current: {}). Audio will not be routed to BlackHole!", name);
                         log::warn!("⚠️ [BlackHole] Please set Sound Output to 'BlackHole 2ch' in System Settings > Sound > Output");
+                        
+                        // Note: macOS doesn't allow programmatic setting of output device via osascript
+                        // User must manually configure Sound Output in System Settings
+                        // Alternative: Create Multi-Output Device in Audio MIDI Setup to route to both speakers and BlackHole
+                        log::info!("💡 [BlackHole] To enable system audio capture:");
+                        log::info!("   1. System Settings > Sound > Output: Select 'BlackHole 2ch'");
+                        log::info!("   OR");
+                        log::info!("   2. Audio MIDI Setup > Create Multi-Output Device (BlackHole + Speakers)");
+                        log::info!("   Then set Multi-Output Device as default output");
                     } else {
                         log::info!("✅ [BlackHole] Default output is BlackHole - audio should be routed correctly");
                     }

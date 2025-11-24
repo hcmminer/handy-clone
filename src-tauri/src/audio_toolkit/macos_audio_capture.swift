@@ -204,8 +204,10 @@ func runCapture() {
                 log("Note: Audio capture may work better from the display where audio is playing")
             }
             
-            // Use display but include all applications (this should capture audio from all apps)
-            let filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
+            // Try capturing from display directly (this should capture system audio)
+            // Note: On macOS, system audio capture may require capturing from the display
+            // Use empty applications list to capture from display directly
+            let filter = SCContentFilter(display: display, including: [], exceptingWindows: [])
             
             let config = SCStreamConfiguration()
             config.capturesAudio = true

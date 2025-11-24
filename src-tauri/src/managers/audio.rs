@@ -313,6 +313,10 @@ impl AudioRecordingManager {
                             // Accumulation buffer to avoid missing any audio (stores resampled 16kHz samples)
                             let mut accumulated_buffer: VecDeque<f32> = VecDeque::new();
                             
+                            // Track previous RMS to detect when audio starts (transitions from silence to non-silence)
+                            let mut previous_rms: Option<f32> = None;
+                            let mut silence_detected_count = 0u64;
+                            
                             info!("Auto-transcription thread started, interval: {}s (real-time mode, no audio loss)", TRANSCRIBE_INTERVAL_SECS);
                             info!("📊 [Auto-transcription] Resampler initialized: {}kHz -> {}kHz", SYSTEM_AUDIO_SAMPLE_RATE, TARGET_SAMPLE_RATE);
                             
@@ -446,11 +450,32 @@ impl AudioRecordingManager {
                                                 rms,
                                                 max_amplitude);
                                             
-                                            // Warn if audio seems silent
-                                            if rms < 0.001 && max_amplitude < 0.01 {
-                                                warn!("⚠️ [Auto-transcription] Audio appears to be silent (RMS: {:.6}, Max: {:.6}). Please check Sound preferences: Output should be set to BlackHole 2ch", rms, max_amplitude);
-                                                let _ = app_handle.emit("log-update", format!("⚠️ [Auto-transcription] Audio appears silent. Please set Sound Output to BlackHole 2ch in System Settings"));
+                                            // Detect transition from silence to non-silence
+                                            let was_silent = previous_rms.map(|pr| pr < 0.00001).unwrap_or(true);
+                                            let is_now_audio = rms > 0.00001;
+                                            
+                                            if was_silent && is_now_audio {
+                                                info!("🎉 [Auto-transcription] ✅✅✅ AUDIO DETECTED! Audio transitioned from silence to active! RMS: {:.6}, Max: {:.6}", rms, max_amplitude);
+                                                let _ = app_handle.emit("log-update", format!("🎉 [Auto-transcription] ✅✅✅ AUDIO DETECTED! RMS: {:.6}, Max: {:.6} - Live caption will start working now!", rms, max_amplitude));
                                             }
+                                            
+                                            // Warn if audio seems silent
+                                            if rms < 0.00001 && max_amplitude < 0.01 {
+                                                silence_detected_count += 1;
+                                                if silence_detected_count % 10 == 0 { // Log every 10 silent detections
+                                                    warn!("⚠️ [Auto-transcription] Audio appears to be silent (RMS: {:.6}, Max: {:.6}) - checked {} times. Please check Sound preferences: Output should be set to BlackHole 2ch", rms, max_amplitude, silence_detected_count);
+                                                    let _ = app_handle.emit("log-update", format!("⚠️ [Auto-transcription] Audio appears silent (checked {} times). Please set Sound Output to BlackHole 2ch in System Settings", silence_detected_count));
+                                                }
+                                            } else {
+                                                // Reset silence counter when audio is detected
+                                                if silence_detected_count > 0 {
+                                                    info!("✅ [Auto-transcription] Audio detected after {} silent checks! RMS: {:.6}, Max: {:.6}", silence_detected_count, rms, max_amplitude);
+                                                    silence_detected_count = 0;
+                                                }
+                                            }
+                                            
+                                            // Update previous RMS for next iteration
+                                            previous_rms = Some(rms);
                                         
                                         // Emit log event to frontend
                                         let _ = app_handle.emit("log-update", format!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept)",

@@ -49,14 +49,15 @@ impl MacOSSystemAudio {
     }
     
     /// Try to find BlackHole device
+    /// Also tries to find any input device that might have system audio
     fn find_blackhole_device() -> Option<Device> {
         let host = crate::audio_toolkit::get_cpal_host();
-        log::info!("🔍 [BlackHole] Enumerating input devices...");
+        log::info!("🔍 [SystemAudio] Enumerating input devices to find system audio source...");
         
         // Also check default input device
         if let Some(default_input) = host.default_input_device() {
             if let Ok(name) = default_input.name() {
-                log::info!("🔍 [BlackHole] Default input device: {}", name);
+                log::info!("🔍 [SystemAudio] Default input device: {}", name);
             }
         }
         
@@ -97,37 +98,57 @@ impl MacOSSystemAudio {
         
         if let Ok(devices) = host.input_devices() {
             let mut device_list = Vec::new();
+            let mut blackhole_device: Option<Device> = None;
+            
             for device in devices {
                 if let Ok(name) = device.name() {
                     device_list.push(name.clone());
-                    log::info!("🔍 [BlackHole] Found input device: {}", name);
+                    log::info!("🔍 [SystemAudio] Found input device: {}", name);
+                    
+                    // Priority 1: BlackHole (best for system audio)
                     if name.contains("BlackHole") || name.contains("blackhole") {
-                        log::info!("✅ [BlackHole] Found BlackHole device: {}", name);
-                        return Some(device);
+                        log::info!("✅ [SystemAudio] Found BlackHole device: {}", name);
+                        blackhole_device = Some(device);
+                        break; // Use first BlackHole found
                     }
                 }
             }
-            log::info!("📋 [BlackHole] All input devices: {:?}", device_list);
+            
+            log::info!("📋 [SystemAudio] All input devices: {:?}", device_list);
+            
+            if blackhole_device.is_some() {
+                return blackhole_device;
+            }
+            
+            // If no BlackHole found, log all devices for debugging
+            log::warn!("⚠️ [SystemAudio] BlackHole device not found in input devices.");
+            log::info!("💡 [SystemAudio] Available input devices: {:?}", device_list);
+            log::info!("💡 [SystemAudio] To capture system audio, you need:");
+            log::info!("   1. Install BlackHole: brew install blackhole-2ch");
+            log::info!("   2. Configure Sound Output to route audio to BlackHole");
+            log::info!("   3. Or create Multi-Output Device (BlackHole + Speakers)");
         } else {
-            log::warn!("⚠️ [BlackHole] Failed to enumerate input devices");
+            log::warn!("⚠️ [SystemAudio] Failed to enumerate input devices");
         }
-        log::info!("⚠️ [BlackHole] BlackHole device not found. Will try ScreenCaptureKit.");
+        
+        log::info!("⚠️ [SystemAudio] No suitable input device found. Will try ScreenCaptureKit.");
         None
     }
     
     /// Start capture from BlackHole device
     /// Returns true if audio is detected (RMS > threshold), false if silent
     fn start_blackhole_capture(&mut self, device: Device) -> Result<bool> {
-        log::info!("🎯 Starting BlackHole capture...");
+        let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+        log::info!("🎯 Starting capture from device: {}", device_name);
         
         let config = device.default_input_config()
-            .map_err(|e| anyhow!("Failed to get BlackHole config: {}", e))?;
+            .map_err(|e| anyhow!("Failed to get device config for {}: {}", device_name, e))?;
         
         let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
         
-        log::info!("📊 BlackHole config: sample_rate={}, channels={}, format={:?}", 
-            sample_rate, channels, config.sample_format());
+        log::info!("📊 Device config ({}): sample_rate={}, channels={}, format={:?}", 
+            device_name, sample_rate, channels, config.sample_format());
         
         let buffer = self.sample_buffer.clone();
         
@@ -178,11 +199,14 @@ impl MacOSSystemAudio {
         self.use_blackhole = true;
         self.is_capturing = true;
         
-        log::info!("✅ BlackHole capture started successfully!");
+        log::info!("✅ Capture started successfully from device: {}", device_name);
         
         // Wait a bit and check if audio is present
         // Check multiple times over 5 seconds to catch audio that starts later
         let mut audio_detected = false;
+        let mut max_rms_seen = 0.0f32;
+        let mut max_amp_seen = 0.0f32;
+        
         for check_round in 1..=5 {
             std::thread::sleep(std::time::Duration::from_secs(1));
             let buf = self.sample_buffer.lock().unwrap();
@@ -200,27 +224,38 @@ impl MacOSSystemAudio {
                     let rms = (sum_sq / samples.len() as f32).sqrt();
                     let max_amp = samples.iter().map(|&s| s.abs()).fold(0.0f32, |a, b| a.max(b));
                     
-                    log::info!("🔍 [BlackHole] Audio check #{} after {}s: {} samples, RMS: {:.6}, Max: {:.6}", 
+                    max_rms_seen = max_rms_seen.max(rms);
+                    max_amp_seen = max_amp_seen.max(max_amp);
+                    
+                    log::info!("🔍 [SystemAudio] Audio check #{} after {}s: {} samples, RMS: {:.6}, Max: {:.6}", 
                         check_round, check_round, sample_count, rms, max_amp);
                     
                     if rms > 0.00001 {
-                        log::info!("✅ [BlackHole] Audio detected! RMS: {:.6}, Max: {:.6}", rms, max_amp);
+                        log::info!("✅ [SystemAudio] ✅✅✅ AUDIO DETECTED! RMS: {:.6}, Max: {:.6}", rms, max_amp);
+                        let _ = self.app_handle.emit("log-update", format!(
+                            "✅✅✅ [SystemAudio] AUDIO DETECTED! RMS: {:.6}, Max: {:.6} - Live caption will start working now!", rms, max_amp
+                        ));
                         audio_detected = true;
                         break;
                     }
                 }
             } else {
-                log::info!("🔍 [BlackHole] Audio check #{} after {}s: No samples yet (waiting for audio...)", 
-                    check_round, check_round);
+                log::info!("🔍 [SystemAudio] Audio check #{} after {}s: No samples yet (waiting for audio from {}...)", 
+                    check_round, check_round, device_name);
             }
         }
         
         if !audio_detected {
-            log::warn!("⚠️ [BlackHole] No audio detected after 5s. Audio may not be routed to BlackHole.");
-            log::warn!("⚠️ [BlackHole] User may need to configure Sound Output to 'BlackHole 2ch'");
-            log::warn!("⚠️ [BlackHole] Will continue monitoring - audio may start later when user configures output");
-            // Don't return false - keep BlackHole running and monitor for audio
-            // User can configure Sound Output and audio will start flowing
+            log::warn!("⚠️ [SystemAudio] No audio detected after 5s from device: {}", device_name);
+            log::warn!("⚠️ [SystemAudio] Max RMS seen: {:.6}, Max amplitude seen: {:.6}", max_rms_seen, max_amp_seen);
+            log::warn!("⚠️ [SystemAudio] User may need to configure Sound Output to route audio to this device");
+            log::warn!("⚠️ [SystemAudio] Will continue monitoring - audio may start later when user configures output");
+            
+            // Emit detailed log to frontend
+            let _ = self.app_handle.emit("log-update", format!(
+                "⚠️ [SystemAudio] No audio detected from {}. Max RMS: {:.6}. Please configure Sound Output to route audio to this device.", 
+                device_name, max_rms_seen
+            ));
         }
         
         Ok(audio_detected)

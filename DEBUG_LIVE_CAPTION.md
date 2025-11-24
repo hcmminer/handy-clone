@@ -54,6 +54,7 @@
   - **Vấn đề hiện tại:** Default output device không phải BlackHole → audio không được route qua BlackHole → capture silence (RMS: 0.000000)
   - **Giải pháp:** User cần cấu hình Sound Output sang "BlackHole 2ch" trong System Settings
   - **Lưu ý:** macOS không cho phép programmatic set output device, cần cấu hình thủ công
+  - **Auto-fallback:** ✅ App tự động check audio sau 2s, nếu silence thì tự động fallback sang ScreenCaptureKit
   - ✅ Thêm logging chi tiết để debug (đã thêm - xác nhận vấn đề)
   - ✅ Xác nhận `streamDidStart` được gọi (đã xác nhận - vẫn không có audio buffers)
   - ⚠️ **Cần xem xét cách khác để capture system audio:**

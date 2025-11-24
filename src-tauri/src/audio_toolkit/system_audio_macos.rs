@@ -73,26 +73,28 @@ impl MacOSSystemAudio {
             }
             log::info!("📋 [BlackHole] All output devices: {:?}", output_list);
             
-            // Check default output
+            // Check default output - CRITICAL: Audio must be routed here for capture to work
             if let Some(default_output) = host.default_output_device() {
                 if let Ok(name) = default_output.name() {
-                    log::info!("🔍 [BlackHole] Default output device: {}", name);
-                    if !name.contains("BlackHole") && !name.contains("blackhole") {
-                        log::warn!("⚠️ [BlackHole] Default output is NOT BlackHole (current: {}). Audio will not be routed to BlackHole!", name);
-                        log::warn!("⚠️ [BlackHole] Please set Sound Output to 'BlackHole 2ch' in System Settings > Sound > Output");
-                        
-                        // Note: macOS doesn't allow programmatic setting of output device via osascript
-                        // User must manually configure Sound Output in System Settings
-                        // Alternative: Create Multi-Output Device in Audio MIDI Setup to route to both speakers and BlackHole
-                        log::info!("💡 [BlackHole] To enable system audio capture:");
-                        log::info!("   1. System Settings > Sound > Output: Select 'BlackHole 2ch'");
-                        log::info!("   OR");
-                        log::info!("   2. Audio MIDI Setup > Create Multi-Output Device (BlackHole + Speakers)");
-                        log::info!("   Then set Multi-Output Device as default output");
+                    log::info!("🔍 [SystemAudio] Default OUTPUT device: {}", name);
+                    if !name.contains("BlackHole") && !name.contains("blackhole") && !name.contains("Multi-Output") {
+                        log::error!("❌ [SystemAudio] ⚠️⚠️⚠️ CRITICAL: Default OUTPUT is NOT BlackHole or Multi-Output Device!");
+                        log::error!("❌ [SystemAudio] Current output: '{}'", name);
+                        log::error!("❌ [SystemAudio] Audio from Chrome/system will NOT be routed to BlackHole!");
+                        log::error!("❌ [SystemAudio] This is why you're seeing RMS: 0.000000 (silence)");
+                        log::warn!("💡 [SystemAudio] SOLUTION: Configure Sound OUTPUT (not Input) to route audio:");
+                        log::warn!("   Option 1: System Settings > Sound > Output: Select 'BlackHole 2ch'");
+                        log::warn!("   Option 2: Create Multi-Output Device (BlackHole + Speakers) in Audio MIDI Setup");
+                        log::warn!("   Then set Multi-Output Device as default OUTPUT");
                     } else {
-                        log::info!("✅ [BlackHole] Default output is BlackHole - audio should be routed correctly");
+                        log::info!("✅ [SystemAudio] Default OUTPUT is '{}' - audio should be routed correctly", name);
+                        if name.contains("Multi-Output") {
+                            log::info!("✅ [SystemAudio] Multi-Output Device detected - audio will route to both speakers and BlackHole");
+                        }
                     }
                 }
+            } else {
+                log::warn!("⚠️ [SystemAudio] Could not get default output device");
             }
         }
         

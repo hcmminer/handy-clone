@@ -23,13 +23,27 @@ macOS ScreenCaptureKit không gửi audio buffers trong nhiều trường hợp,
 - User cần cấu hình Sound preferences để route audio qua BlackHole
 
 **Cách sử dụng:**
+
+**Option 1: Chỉ dùng BlackHole (mất audio từ speakers)**
 1. User cài đặt BlackHole: `brew install blackhole-2ch` hoặc download từ [GitHub](https://github.com/ExistentialAudio/BlackHole)
-2. **QUAN TRỌNG:** User cấu hình Sound preferences:
-   - System Settings > Sound > Output: Chọn "BlackHole 2ch"
-   - Nếu không cấu hình, app sẽ capture silence (RMS = 0)
-3. App tự động detect và sử dụng BlackHole nếu có sẵn
-   - System Settings > Sound > Input: Chọn "BlackHole 2ch"
-3. App capture từ BlackHole device như một microphone thông thường
+2. System Settings > Sound > Output: Chọn "BlackHole 2ch"
+3. App tự động detect và capture từ BlackHole
+
+**Option 2: Multi-Output Device (giữ audio từ speakers + capture) - KHUYẾN NGHỊ ⭐**
+1. User cài đặt BlackHole: `brew install blackhole-2ch`
+2. Mở **Audio MIDI Setup** (Applications > Utilities > Audio MIDI Setup)
+3. Click **+** button ở bottom-left, chọn **Create Multi-Output Device**
+4. Trong Multi-Output Device:
+   - ✅ Check box cho **BlackHole 2ch**
+   - ✅ Check box cho **Built-in Output** (hoặc speakers của bạn)
+   - Đảm bảo **Master Device** là **Built-in Output** (để volume control hoạt động)
+5. System Settings > Sound > Output: Chọn **Multi-Output Device** vừa tạo
+6. App tự động detect và capture từ BlackHole, trong khi audio vẫn phát từ speakers
+
+**Lưu ý:**
+- App sẽ tự động detect khi audio bắt đầu (khi user đã cấu hình đúng)
+- App sẽ thông báo ngay khi audio được detect
+- Không cần restart app sau khi cấu hình
 
 **Implementation:**
 - Sử dụng `cpal` hoặc `rodio` để enumerate audio devices

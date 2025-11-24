@@ -67,6 +67,57 @@ Handy includes an advanced debug mode for development and troubleshooting. Acces
 - **macOS**: `Cmd+Shift+D`
 - **Windows/Linux**: `Ctrl+Shift+D`
 
+### Viewing Logs (Real-time)
+
+To view application logs in real-time, use the following commands:
+
+**macOS:**
+```bash
+# View logs in real-time
+tail -f ~/Library/Logs/com.pais.handy/handy.log
+
+# View last 100 lines
+tail -100 ~/Library/Logs/com.pais.handy/handy.log
+
+# Filter for specific keywords (e.g., transcription, audio, system)
+tail -f ~/Library/Logs/com.pais.handy/handy.log | grep -E "(transcription|audio|system|🎯)"
+```
+
+**Windows:**
+```powershell
+# View logs in real-time (PowerShell)
+Get-Content "$env:APPDATA\com.pais.handy\logs\handy.log" -Wait -Tail 100
+```
+
+**Linux:**
+```bash
+# View logs in real-time
+tail -f ~/.config/com.pais.handy/logs/handy.log
+
+# View last 100 lines
+tail -100 ~/.config/com.pais.handy/logs/handy.log
+```
+
+**Common log patterns to watch:**
+- `🎯 Auto-transcription result` - Shows successful transcriptions
+- `✅ System capture read` - Confirms system audio is being captured
+- `Initializing system audio capture` - System audio capture startup
+- `Auto-transcription thread started` - Continuous transcription mode
+- `live-caption-update` - Live caption events
+
+**Troubleshooting System Audio Capture (macOS):**
+
+If you see `❌ Error getting shareable content: The user declined TCCs` in the logs, you need to grant Screen Recording permission:
+
+1. Open **System Settings** → **Privacy & Security** → **Screen Recording**
+2. Find and enable permission for:
+   - **Terminal** (if running via `bun tauri dev`)
+   - **Handy** (if running the built app)
+3. Restart the application after granting permission
+4. Check logs again - you should see `✅ First audio buffer received!` when audio is playing
+
+**Note:** On macOS, Screen Recording permission is required to capture system audio using ScreenCaptureKit.
+
 ## Known Issues & Current Limitations
 
 This project is actively being developed and has some [known issues](https://github.com/cjpais/Handy/issues). We believe in transparency about the current state:

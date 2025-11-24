@@ -160,13 +160,24 @@ func runCapture() {
         do {
             // Check Screen Recording permission first
             // Note: SCShareableContent will trigger permission dialog if not granted
-            log("Checking Screen Recording permission...")
+            log("🔍 Checking Screen Recording permission...")
             log("Note: If permission dialog appears, please click 'Allow'")
             
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let content: SCShareableContent
+            do {
+                content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            } catch {
+                log("❌ PERMISSION DENIED: \(error.localizedDescription)")
+                log("⚠️  ACTION REQUIRED: Please grant Screen Recording permission:")
+                log("   1. Open System Settings > Privacy & Security > Screen Recording")
+                log("   2. Enable permission for 'Terminal' (if running via bun tauri dev)")
+                log("   3. Or enable permission for 'Handy' (if running built app)")
+                log("   4. Restart the application after granting permission")
+                exit(1)
+            }
             
-            log("✅ Permission check passed - Found \(content.displays.count) displays")
-            log("Found \(content.applications.count) applications")
+            log("✅ PERMISSION GRANTED - Found \(content.displays.count) displays")
+            log("✅ Found \(content.applications.count) applications")
             
             // Try to capture from all applications instead of display
             // SCK may not capture audio from display, but can capture from applications

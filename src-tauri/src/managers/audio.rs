@@ -6,9 +6,9 @@ use crate::helpers::clamshell;
 use crate::settings::{get_settings, AppSettings, AudioSource};
 use crate::utils;
 use log::{debug, error, info, warn};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic};
 use std::time::Instant;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn set_mute(mute: bool) {
     // Expected behavior:
@@ -320,10 +320,26 @@ impl AudioRecordingManager {
                                     {
                                         if let Some(capture) = rm.system_capture.lock().unwrap().as_mut() {
                                             match capture.read_samples() {
-                                                Ok(Some(s)) if !s.is_empty() => Some(s),
-                                                _ => None,
+                                                Ok(Some(s)) => {
+                                                    if !s.is_empty() {
+                                                        debug!("Auto-transcription: Read {} new samples from system capture", s.len());
+                                                        Some(s)
+                                                    } else {
+                                                        debug!("Auto-transcription: System capture returned empty samples");
+                                                        None
+                                                    }
+                                                },
+                                                Ok(None) => {
+                                                    // Buffer is empty - this is normal if no audio is playing
+                                                    None
+                                                },
+                                                Err(e) => {
+                                                    error!("Auto-transcription: Failed to read samples from system capture: {}", e);
+                                                    None
+                                                }
                                             }
                                         } else {
+                                            warn!("Auto-transcription: System capture not available");
                                             None
                                         }
                                     }
@@ -336,6 +352,16 @@ impl AudioRecordingManager {
                                 // Add new samples to accumulation buffer
                                 if let Some(new_samples) = new_samples {
                                     accumulated_buffer.extend(new_samples);
+                                    debug!("Auto-transcription: Accumulated buffer now has {} samples ({}s)", 
+                                        accumulated_buffer.len(), 
+                                        accumulated_buffer.len() / 16000);
+                                } else {
+                                    // Log periodically when no samples are available
+                                    static NO_SAMPLES_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                    let count = NO_SAMPLES_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if count % 20 == 0 {
+                                        warn!("Auto-transcription: No audio samples available (checked {} times). Please check Screen Recording permission!", count + 1);
+                                    }
                                 }
                                 
                                 // Only transcribe if we have enough audio (minimum 2 seconds)
@@ -399,6 +425,11 @@ impl AudioRecordingManager {
                                                             error!("Failed to save auto-transcription to history: {}", e);
                                                         }
                                                     });
+                                                    
+                                                    // Emit live caption event to frontend
+                                                    if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
+                                                        error!("Failed to emit live-caption-update event: {}", e);
+                                                    }
                                                     
                                                     // Paste the transcription
                                                     if let Err(e) = crate::utils::paste(trimmed.to_string(), app_handle.clone()) {

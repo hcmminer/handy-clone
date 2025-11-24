@@ -115,6 +115,8 @@ const settingUpdaters: {
     }),
   audio_source: (value) =>
     invoke("set_audio_source", { source: value }),
+  live_caption_enabled: (value) =>
+    invoke("change_live_caption_enabled_setting", { enabled: value }),
   recording_retention_period: (value) =>
     invoke("update_recording_retention_period", { period: value }),
   translate_to_english: (value) =>

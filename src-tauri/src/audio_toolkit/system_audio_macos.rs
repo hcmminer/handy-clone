@@ -176,16 +176,20 @@ impl SystemAudioCapture for MacOSSystemAudio {
     fn read_samples(&mut self) -> Result<Option<Vec<f32>>> {
         let mut buffer = self.sample_buffer.lock().unwrap();
 
-        let sample_count = buffer.len();
         if buffer.is_empty() {
-            // Only log empty buffer occasionally to reduce spam
+            // Log periodically to confirm we're checking (every 10 calls)
+            static CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let count = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count % 10 == 0 {
+                log::debug!("System capture buffer is empty (checked {} times)", count + 1);
+            }
             return Ok(None);
         }
 
         // Drain all samples
         let samples: Vec<f32> = buffer.drain(..).collect();
         // Always log when we read samples - this is important
-        log::info!("System capture read {} samples from buffer", samples.len());
+        log::info!("✅ System capture read {} samples from buffer", samples.len());
         Ok(Some(samples))
     }
 

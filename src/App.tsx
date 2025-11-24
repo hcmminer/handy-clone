@@ -7,6 +7,7 @@ import Footer from "./components/footer";
 import Onboarding from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { useSettings } from "./hooks/useSettings";
+import LiveCaption from "./components/LiveCaption";
 
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
@@ -90,6 +91,8 @@ function App() {
       </div>
       {/* Fixed footer at bottom */}
       <Footer />
+      {/* Live Caption - Google Translate style */}
+      <LiveCaption enabled={(settings?.live_caption_enabled ?? true) && settings?.always_on_microphone && settings?.audio_source === "system_audio"} />
     </div>
   );
 }

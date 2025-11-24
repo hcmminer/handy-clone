@@ -9,6 +9,7 @@ import { PushToTalk } from "../PushToTalk";
 import { AudioFeedback } from "../AudioFeedback";
 import { useSettings } from "../../../hooks/useSettings";
 import { VolumeSlider } from "../VolumeSlider";
+import { LiveCaptionToggle } from "../LiveCaptionToggle";
 
 export const GeneralSettings: React.FC = () => {
   const { audioFeedbackEnabled } = useSettings();
@@ -29,6 +30,9 @@ export const GeneralSettings: React.FC = () => {
           disabled={!audioFeedbackEnabled}
         />
         <VolumeSlider disabled={!audioFeedbackEnabled} />
+      </SettingsGroup>
+      <SettingsGroup title="Display">
+        <LiveCaptionToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
     </div>
   );

@@ -230,6 +230,8 @@ pub struct AppSettings {
     pub post_process_selected_prompt_id: Option<String>,
     #[serde(default)]
     pub mute_while_recording: bool,
+    #[serde(default = "default_live_caption_enabled")]
+    pub live_caption_enabled: bool,
 }
 
 fn default_model() -> String {
@@ -254,6 +256,10 @@ fn default_autostart_enabled() -> bool {
 
 fn default_selected_language() -> String {
     "vi".to_string() // Vietnamese as default
+}
+
+fn default_live_caption_enabled() -> bool {
+    true // Default to enabled for live caption display
 }
 
 fn default_overlay_position() -> OverlayPosition {
@@ -414,6 +420,7 @@ pub fn get_default_settings() -> AppSettings {
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
         mute_while_recording: false,
+        live_caption_enabled: default_live_caption_enabled(),
     }
 }
 

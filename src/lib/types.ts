@@ -96,6 +96,7 @@ export const SettingsSchema = z.object({
   clamshell_microphone: z.string().nullable().optional(),
   selected_output_device: z.string().nullable().optional(),
   audio_source: z.enum(["microphone", "system_audio"]).nullable().optional(),
+  live_caption_enabled: z.boolean().optional().default(true),
   translate_to_english: z.boolean(),
   selected_language: z.string(),
   overlay_position: OverlayPositionSchema,

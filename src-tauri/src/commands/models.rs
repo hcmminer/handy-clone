@@ -8,7 +8,10 @@ use tauri::{AppHandle, State};
 pub async fn get_available_models(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<Vec<ModelInfo>, String> {
-    Ok(model_manager.get_available_models())
+    log::info!("get_available_models command called");
+    let models = model_manager.get_available_models();
+    log::info!("get_available_models returning {} models", models.len());
+    Ok(models)
 }
 
 #[tauri::command]
@@ -95,8 +98,11 @@ pub async fn is_model_loading(
 pub async fn has_any_models_available(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<bool, String> {
+    log::info!("has_any_models_available command called");
     let models = model_manager.get_available_models();
-    Ok(models.iter().any(|m| m.is_downloaded))
+    let has_models = models.iter().any(|m| m.is_downloaded);
+    log::info!("has_any_models_available returning: {}", has_models);
+    Ok(has_models)
 }
 
 #[tauri::command]

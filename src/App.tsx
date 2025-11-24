@@ -51,14 +51,28 @@ function App() {
   }, [settings?.debug_mode, updateSetting]);
 
   const checkOnboardingStatus = async () => {
-    try {
-      // Always check if they have any models available
-      const modelsAvailable: boolean = await invoke("has_any_models_available");
-      setShowOnboarding(!modelsAvailable);
-    } catch (error) {
-      console.error("Failed to check onboarding status:", error);
-      setShowOnboarding(true);
-    }
+    // Retry with delay to ensure backend is ready
+    const checkWithRetry = async (retries = 3, delay = 500) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          // Always check if they have any models available
+          const modelsAvailable: boolean = await invoke("has_any_models_available");
+          console.log("Models available:", modelsAvailable);
+          setShowOnboarding(!modelsAvailable);
+          return;
+        } catch (error) {
+          console.error(`Failed to check onboarding status (attempt ${i + 1}/${retries}):`, error);
+          if (i < retries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          } else {
+            // If all retries fail, show onboarding as fallback
+            console.warn("All retries failed, showing onboarding as fallback");
+            setShowOnboarding(true);
+          }
+        }
+      }
+    };
+    await checkWithRetry();
   };
 
   const handleModelSelected = () => {

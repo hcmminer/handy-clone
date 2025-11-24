@@ -348,27 +348,23 @@ func runCapture() {
             // Strategy 3: Fallback to display
             var filter: SCContentFilter
             
-            // Strategy: Try application capture first (was successful at 18:08)
-            // If Chrome is in shareableApps, application capture should work
-            // Display capture often doesn't send audio buffers on macOS
+            // NEW STRATEGY: Try display capture FIRST (may work better for system audio)
+            // Then fallback to application capture if needed
+            // Display capture sometimes works better for system audio on macOS
             let hasChrome = shareableApps.contains { app in
                 app.applicationName.contains("Chrome") || app.applicationName.contains("Google Chrome")
             }
             
+            // Try display capture first - it may work better for system audio
+            log("🎯 Strategy 1: Display capture (trying first for system audio)")
+            log("   💡 Display capture may work better for system audio on macOS")
+            log("   💡 Display ID: \(display.displayID)")
+            filter = SCContentFilter(display: display, excludingWindows: [])
+            
+            // Note: We'll try display capture first, but keep application capture as fallback if needed
             if shareableApps.count > 0 && hasChrome {
-                log("🎯 Strategy 1: Application capture with Chrome (was successful before)")
-                log("   💡 Chrome detected in shareableApps - application capture should work")
-                log("   💡 Applications: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
-                filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
-            } else if shareableApps.count > 0 {
-                log("🎯 Strategy 2: Application capture without Chrome (Chrome not in shareableApps)")
-                log("   ⚠️  Chrome not detected, but trying application capture anyway")
-                log("   💡 Applications: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
-                filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
-            } else {
-                log("🎯 Strategy 3: Display capture (fallback - no shareable apps)")
-                log("   ⚠️  No shareable apps found, using display capture as fallback")
-                filter = SCContentFilter(display: display, excludingWindows: [])
+                log("   💡 Chrome is available in shareableApps: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
+                log("   💡 If display capture doesn't work, we can try application capture")
             }
             
             let config = SCStreamConfiguration()
@@ -473,15 +469,22 @@ func runCapture() {
             // Log periodically only if no audio received (reduce log spam)
             Task {
                 var checkCount = 0
-                var _ = false // streamDidStartCalled - not used but kept for future reference
+                var streamDidStartReceived = false
                 // Check if streamDidStart was called after 2 seconds
                 try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-                if delegate.bufferCount == 0 && delegate.nonAudioCount == 0 {
+                
+                // Check if streamDidStart was called by checking delegate state
+                // If we received buffers, streamDidStart must have been called
+                if delegate.bufferCount > 0 || delegate.nonAudioCount > 0 {
+                    streamDidStartReceived = true
+                    log("✅ streamDidStart was called (confirmed by receiving buffers)")
+                } else {
                     log("⚠️  After 2 seconds: No buffers received yet (bufferCount=0, nonAudioCount=0)")
                     log("   🔍 This could mean:")
                     log("   1. streamDidStart has not been called yet (SCStream not fully active)")
                     log("   2. SCStream is not sending any buffers at all")
                     log("   3. There's a delay before buffers start arriving")
+                    log("   ⚠️  If streamDidStart is NOT called, SCStream may not be fully active")
                 }
                 while true {
                     try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds

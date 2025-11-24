@@ -208,3 +208,47 @@ pub fn get_audio_source(app: AppHandle) -> Result<String, String> {
         _ => "microphone".to_string(),
     })
 }
+
+#[derive(Serialize)]
+pub struct SystemAudioStatus {
+    pub permission: String, // "unknown" | "granted" | "denied"
+    pub capture: String,    // "unknown" | "active" | "waiting" | "error"
+    pub audio_detection: String, // "unknown" | "active" | "waiting"
+}
+
+#[tauri::command]
+pub fn get_system_audio_status(app: AppHandle) -> Result<SystemAudioStatus, String> {
+    let rm = app.state::<Arc<AudioRecordingManager>>();
+    let (is_open, has_audio) = rm.get_system_audio_status();
+    
+    // Determine status
+    let capture_status = if is_open {
+        "active"
+    } else {
+        "unknown"
+    };
+    
+    let audio_detection_status = if is_open {
+        if has_audio {
+            "active"
+        } else {
+            "waiting"
+        }
+    } else {
+        "unknown"
+    };
+    
+    // Permission is inferred from capture status
+    // If capture is active, permission is likely granted
+    let permission_status = if is_open {
+        "granted"
+    } else {
+        "unknown"
+    };
+    
+    Ok(SystemAudioStatus {
+        permission: permission_status.to_string(),
+        capture: capture_status.to_string(),
+        audio_detection: audio_detection_status.to_string(),
+    })
+}

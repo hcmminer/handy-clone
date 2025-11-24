@@ -11,6 +11,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { VolumeSlider } from "../VolumeSlider";
 import { LiveCaptionToggle } from "../LiveCaptionToggle";
 import { LiveCaptionViewer } from "../LiveCaptionViewer";
+import { SystemAudioStatus } from "../SystemAudioStatus";
 
 export const GeneralSettings: React.FC = () => {
   const { audioFeedbackEnabled } = useSettings();
@@ -35,6 +36,7 @@ export const GeneralSettings: React.FC = () => {
       <SettingsGroup title="Display">
         <LiveCaptionToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
+      <SystemAudioStatus />
       <LiveCaptionViewer />
     </div>
   );

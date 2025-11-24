@@ -372,6 +372,7 @@ pub fn run() {
             commands::audio::check_custom_sounds,
             commands::audio::set_clamshell_microphone,
             commands::audio::get_clamshell_microphone,
+            commands::audio::get_system_audio_status,
             helpers::clamshell::is_clamshell,
             helpers::clamshell::is_laptop,
             commands::transcription::set_model_unload_timeout,

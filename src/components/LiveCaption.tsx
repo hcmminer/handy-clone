@@ -50,8 +50,12 @@ export default function LiveCaption({ enabled = true }: LiveCaptionProps) {
       }
     });
 
+    // Store cleanup function
+    let cleanupFn: (() => void) | null = null;
+    
     // Log when listener is set up
-    unlisten.then(() => {
+    unlisten.then((fn) => {
+      cleanupFn = fn;
       console.log("✅ [LiveCaption] Event listener registered successfully");
     }).catch((err) => {
       console.error("❌ [LiveCaption] Failed to register event listener:", err);
@@ -59,7 +63,13 @@ export default function LiveCaption({ enabled = true }: LiveCaptionProps) {
 
     return () => {
       console.log(`🛑 [LiveCaption] Cleaning up (received ${eventCount} events total)`);
-      unlisten.then((fn) => fn());
+      if (cleanupFn && typeof cleanupFn === 'function') {
+        try {
+          cleanupFn();
+        } catch (err) {
+          console.warn("⚠️ [LiveCaption] Error cleaning up listener:", err);
+        }
+      }
       clearTimeout(timeoutId);
     };
   }, [enabled]);

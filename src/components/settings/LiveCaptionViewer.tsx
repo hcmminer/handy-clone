@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useSettings } from "../../hooks/useSettings";
 import { SettingsGroup } from "../ui/SettingsGroup";
+import { toast } from "sonner";
 
 export const LiveCaptionViewer: React.FC = () => {
   const { settings } = useSettings();
@@ -10,11 +11,23 @@ export const LiveCaptionViewer: React.FC = () => {
   const logEndRef = useRef<HTMLDivElement>(null);
   const maxLogs = 100;
 
+  const addLog = React.useCallback((type: 'info' | 'warn' | 'error' | 'debug', message: string) => {
+    const time = new Date().toLocaleTimeString();
+    setLogs((prev) => {
+      const newLogs = [...prev, { time, message, type }];
+      return newLogs.slice(-maxLogs);
+    });
+  }, []);
+
   useEffect(() => {
     if (!settings?.live_caption_enabled) {
       setCaption("");
       return;
     }
+
+    // Store cleanup functions
+    let cleanupCaption: (() => void) | null = null;
+    let cleanupLog: (() => void) | null = null;
 
     const unlistenCaption = listen<string>("live-caption-update", (event) => {
       const newCaption = event.payload.trim();
@@ -22,6 +35,12 @@ export const LiveCaptionViewer: React.FC = () => {
         setCaption(newCaption);
         addLog('info', `🎯 Caption received: "${newCaption}"`);
       }
+    });
+
+    unlistenCaption.then((fn) => {
+      cleanupCaption = fn;
+    }).catch((err) => {
+      console.error("❌ [LiveCaptionViewer] Failed to register caption listener:", err);
     });
 
     const unlistenLog = listen<string>("log-update", (event) => {
@@ -37,22 +56,50 @@ export const LiveCaptionViewer: React.FC = () => {
           logType = 'debug';
         }
         addLog(logType, logMessage);
+
+        // Show popup for permission status
+        if (logMessage.includes('PERMISSION DENIED') || logMessage.includes('❌ PERMISSION DENIED')) {
+          toast.error("❌ Screen Recording Permission bị từ chối!", {
+            description: "Vui lòng cấp quyền Screen Recording trong System Settings > Privacy & Security > Screen Recording",
+            duration: 10000,
+          });
+        } else if (logMessage.includes('PERMISSION GRANTED') || logMessage.includes('✅ PERMISSION GRANTED')) {
+          toast.success("✅ Screen Recording Permission đã được cấp!", {
+            description: "App có thể capture system audio rồi",
+            duration: 5000,
+          });
+        } else if (logMessage.includes('First audio buffer received') || logMessage.includes('✅ First audio buffer')) {
+          toast.success("🎉 Đã nhận được audio buffers!", {
+            description: "System audio capture đang hoạt động",
+            duration: 5000,
+          });
+        }
       }
     });
 
+    unlistenLog.then((fn) => {
+      cleanupLog = fn;
+    }).catch((err) => {
+      console.error("❌ [LiveCaptionViewer] Failed to register log listener:", err);
+    });
+
     return () => {
-      unlistenCaption.then((fn) => fn());
-      unlistenLog.then((fn) => fn());
+      if (cleanupCaption && typeof cleanupCaption === 'function') {
+        try {
+          cleanupCaption();
+        } catch (err) {
+          console.warn("⚠️ [LiveCaptionViewer] Error cleaning up caption listener:", err);
+        }
+      }
+      if (cleanupLog && typeof cleanupLog === 'function') {
+        try {
+          cleanupLog();
+        } catch (err) {
+          console.warn("⚠️ [LiveCaptionViewer] Error cleaning up log listener:", err);
+        }
+      }
     };
   }, [settings?.live_caption_enabled, addLog]);
-
-  const addLog = React.useCallback((type: 'info' | 'warn' | 'error' | 'debug', message: string) => {
-    const time = new Date().toLocaleTimeString();
-    setLogs((prev) => {
-      const newLogs = [...prev, { time, message, type }];
-      return newLogs.slice(-maxLogs);
-    });
-  }, []);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -99,6 +146,16 @@ export const LiveCaptionViewer: React.FC = () => {
     setLogs([]);
   };
 
+  const copyLogs = async () => {
+    const logText = logs.map(log => `[${log.time}] ${log.message}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(logText);
+      toast.success("Logs đã được copy vào clipboard!");
+    } catch (err) {
+      toast.error("Không thể copy logs: " + err);
+    }
+  };
+
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title="Live Caption Preview">
@@ -109,29 +166,39 @@ export const LiveCaptionViewer: React.FC = () => {
               <div className="text-lg font-medium text-text break-words">
                 {caption}
               </div>
-            ) : (
-              <div className="text-sm text-text/50 italic">
-                {settings?.live_caption_enabled 
-                  ? "Đang nghe... (Waiting for audio transcription)" 
-                  : "Live Caption is disabled"}
-              </div>
-            )}
+                  ) : (
+                    <div className="text-sm text-text/50 italic">
+                      {settings?.live_caption_enabled !== false
+                        ? "Đang nghe... (Waiting for audio transcription)"
+                        : "Live Caption is disabled - Please enable it in Display settings"}
+                    </div>
+                  )}
           </div>
         </div>
       </SettingsGroup>
 
       <SettingsGroup title="Real-Time Logs">
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-2">
             <div className="text-sm text-text/70">
               Showing last {logs.length} log entries
             </div>
-            <button
-              onClick={clearLogs}
-              className="px-3 py-1 text-sm bg-mid-gray/20 hover:bg-mid-gray/30 rounded-lg transition-colors"
-            >
-              Clear Logs
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={copyLogs}
+                className="px-3 py-1 text-sm bg-mid-gray/20 hover:bg-mid-gray/30 rounded-lg transition-colors"
+                disabled={logs.length === 0}
+              >
+                Copy Logs
+              </button>
+              <button
+                onClick={clearLogs}
+                className="px-3 py-1 text-sm bg-mid-gray/20 hover:bg-mid-gray/30 rounded-lg transition-colors"
+                disabled={logs.length === 0}
+              >
+                Clear Logs
+              </button>
+            </div>
           </div>
           <div className="bg-background-dark rounded-lg p-4 border border-mid-gray/20 max-h-96 overflow-y-auto font-mono text-xs">
             {logs.length === 0 ? (

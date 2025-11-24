@@ -1,4 +1,5 @@
 use crate::audio_toolkit::{
+    audio::FrameResampler,
     list_input_devices, vad::SmoothedVad, AudioRecorder, MacOSSystemAudio, SileroVad,
     SystemAudioCapture,
 };
@@ -6,7 +7,7 @@ use crate::helpers::clamshell;
 use crate::settings::{get_settings, AppSettings, AudioSource};
 use crate::utils;
 use log::{debug, error, info, warn};
-use std::sync::{Arc, Mutex, atomic};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::{Emitter, Manager};
 
@@ -291,10 +292,20 @@ impl AudioRecordingManager {
                             const MIN_SAMPLES: usize = MIN_AUDIO_SECS * 16000;
                             const OVERLAP_SAMPLES: usize = OVERLAP_SECS * 16000;
                             
-                            // Accumulation buffer to avoid missing any audio
+                            // System audio from SCK is 48kHz, need to resample to 16kHz for Whisper
+                            const SYSTEM_AUDIO_SAMPLE_RATE: usize = 48000;
+                            const TARGET_SAMPLE_RATE: usize = 16000;
+                            let mut resampler = FrameResampler::new(
+                                SYSTEM_AUDIO_SAMPLE_RATE,
+                                TARGET_SAMPLE_RATE,
+                                Duration::from_millis(30),
+                            );
+                            
+                            // Accumulation buffer to avoid missing any audio (stores resampled 16kHz samples)
                             let mut accumulated_buffer: VecDeque<f32> = VecDeque::new();
                             
                             info!("Auto-transcription thread started, interval: {}s (real-time mode, no audio loss)", TRANSCRIBE_INTERVAL_SECS);
+                            info!("📊 [Auto-transcription] Resampler initialized: {}kHz -> {}kHz", SYSTEM_AUDIO_SAMPLE_RATE, TARGET_SAMPLE_RATE);
                             
                             loop {
                                 std::thread::sleep(Duration::from_secs(TRANSCRIBE_INTERVAL_SECS));
@@ -349,23 +360,46 @@ impl AudioRecordingManager {
                                     }
                                 };
                                 
-                                // Add new samples to accumulation buffer
+                                // Resample and add new samples to accumulation buffer
                                 if let Some(new_samples) = new_samples {
-                                    accumulated_buffer.extend(new_samples);
-                                    debug!("Auto-transcription: Accumulated buffer now has {} samples ({}s)", 
-                                        accumulated_buffer.len(), 
-                                        accumulated_buffer.len() / 16000);
+                                    let input_count = new_samples.len();
+                                    
+                                    // Resample from 48kHz to 16kHz
+                                    let mut resampled_samples = Vec::new();
+                                    resampler.push(&new_samples, |chunk| {
+                                        resampled_samples.extend_from_slice(chunk);
+                                    });
+                                    
+                                    let resampled_count = resampled_samples.len();
+                                    accumulated_buffer.extend(resampled_samples);
+                                    let total_count = accumulated_buffer.len();
+                                    
+                                    info!("📥 [Auto-transcription] Resampled {} samples (48kHz) -> {} samples (16kHz), total buffer: {} samples ({}s)", 
+                                        input_count,
+                                        resampled_count,
+                                        total_count, 
+                                        total_count / 16000);
+                                    
+                                    // Emit log to frontend
+                                    let _ = app_handle.emit("log-update", format!("📥 [Auto-transcription] Resampled {} samples (48kHz) -> {} samples (16kHz), total buffer: {} samples ({}s)", 
+                                        input_count, resampled_count, total_count, total_count / 16000));
                                 } else {
                                     // Log periodically when no samples are available
                                     static NO_SAMPLES_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                                     let count = NO_SAMPLES_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                     if count % 20 == 0 {
                                         warn!("Auto-transcription: No audio samples available (checked {} times). Please check Screen Recording permission!", count + 1);
+                                        let _ = app_handle.emit("log-update", format!("⚠️ [Auto-transcription] No audio samples available (checked {} times)", count + 1));
                                     }
                                 }
                                 
                                 // Only transcribe if we have enough audio (minimum 2 seconds)
-                                if accumulated_buffer.len() >= MIN_SAMPLES {
+                                let current_buffer_size = accumulated_buffer.len();
+                                if current_buffer_size >= MIN_SAMPLES {
+                                    info!("✅ [Auto-transcription] Buffer has {} samples ({}s), MIN_SAMPLES={}, ready to transcribe!", 
+                                        current_buffer_size, 
+                                        current_buffer_size / 16000,
+                                        MIN_SAMPLES);
                                     // Take samples for transcription (keep overlap for next iteration)
                                     let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
                                         // Take all except overlap samples
@@ -633,6 +667,31 @@ impl AudioRecordingManager {
         } else {
             false
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn get_system_audio_status(&self) -> (bool, bool) {
+        // Returns (is_open, has_audio_samples)
+        let is_open = *self.is_open.lock().unwrap();
+        let has_audio = if is_open {
+            if let Some(capture) = self.system_capture.lock().unwrap().as_mut() {
+                match capture.read_samples() {
+                    Ok(Some(samples)) => !samples.is_empty(),
+                    Ok(None) => false,
+                    Err(_) => false,
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        (is_open, has_audio)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn get_system_audio_status(&self) -> (bool, bool) {
+        (false, false)
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {

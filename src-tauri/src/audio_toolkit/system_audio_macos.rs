@@ -10,7 +10,7 @@ use std::thread;
 
 use crate::audio_toolkit::system_audio::SystemAudioCapture;
 use crate::utils;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 /// macOS implementation using ScreenCaptureKit
 pub struct MacOSSystemAudio {
@@ -38,24 +38,32 @@ impl SystemAudioCapture for MacOSSystemAudio {
         }
 
         // Try to start ScreenCaptureKit helper binary
-        let bin_path = std::env::current_dir()?;
-
-        // Check if we are in src-tauri or root
-        let mut possible_path = bin_path.clone();
-        possible_path.push("bin/macos-audio-capture");
-
+        // First check in app bundle Resources (for production builds)
+        let exe_path = std::env::current_exe()?;
+        let mut possible_path = exe_path.clone();
+        possible_path.pop(); // MacOS/
+        possible_path.pop(); // Contents/
+        possible_path.push("Resources/bin/macos-audio-capture");
+        
         if !possible_path.exists() {
-            // Try src-tauri/bin (if running from root)
+            // Try from current directory (for dev builds)
+            let bin_path = std::env::current_dir()?;
             possible_path = bin_path.clone();
-            possible_path.push("src-tauri/bin/macos-audio-capture");
-        }
+            possible_path.push("bin/macos-audio-capture");
 
-        // Final check
-        if !possible_path.exists() {
-            // Try one level up (if running from target/debug/...)
-            possible_path = bin_path.clone();
-            possible_path.pop();
-            possible_path.push("src-tauri/bin/macos-audio-capture");
+            if !possible_path.exists() {
+                // Try src-tauri/bin (if running from root)
+                possible_path = bin_path.clone();
+                possible_path.push("src-tauri/bin/macos-audio-capture");
+            }
+
+            if !possible_path.exists() {
+                // Try one level up (if running from target/debug/...)
+                let mut bin_path2 = bin_path.clone();
+                bin_path2.pop();
+                possible_path = bin_path2;
+                possible_path.push("src-tauri/bin/macos-audio-capture");
+            }
         }
 
         if possible_path.exists() {
@@ -70,7 +78,8 @@ impl SystemAudioCapture for MacOSSystemAudio {
                     let stdout = child.stdout.take().unwrap();
                     let stderr = child.stderr.take().unwrap();
                     let buffer = self.sample_buffer.clone();
-                    let app_handle = self.app_handle.clone();
+                    let app_handle_audio = self.app_handle.clone();
+                    let app_handle_log = self.app_handle.clone();
 
                     // Thread to read audio data
                     thread::spawn(move || {
@@ -115,7 +124,7 @@ impl SystemAudioCapture for MacOSSystemAudio {
                                         let rms = (sum_sq / float_count as f32).sqrt();
                                         // Scale up a bit for better visibility
                                         let level = (rms * 5.0).min(1.0);
-                                        utils::emit_levels(&app_handle, &vec![level]);
+                                        utils::emit_levels(&app_handle_audio, &vec![level]);
                                     }
 
                                     let mut guard = buffer.lock().unwrap();
@@ -133,7 +142,10 @@ impl SystemAudioCapture for MacOSSystemAudio {
                         let mut reader = std::io::BufReader::new(stderr);
                         let mut line = String::new();
                         while reader.read_line(&mut line).unwrap_or(0) > 0 {
-                            log::info!("[SCK Helper] {}", line.trim());
+                            let log_line = format!("[SCK Helper] {}", line.trim());
+                            log::info!("{}", log_line);
+                            // Emit log to frontend for SystemAudioStatus component
+                            let _ = app_handle_log.emit("log-update", log_line.clone());
                             line.clear();
                         }
                     });
@@ -147,9 +159,10 @@ impl SystemAudioCapture for MacOSSystemAudio {
                 }
             }
         } else {
+            let current_dir = std::env::current_dir().unwrap_or_default();
             log::warn!(
                 "SCK helper binary not found. Searched paths relative to: {:?}",
-                bin_path
+                current_dir
             );
         }
 

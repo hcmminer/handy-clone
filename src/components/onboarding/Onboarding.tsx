@@ -14,19 +14,28 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadModels();
+    // Retry loading models with delay to ensure backend is ready
+    const loadWithRetry = async (retries = 3, delay = 500) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const models: ModelInfo[] = await invoke("get_available_models");
+          // Only show downloadable models for onboarding
+          setAvailableModels(models.filter((m) => !m.is_downloaded));
+          setError(null);
+          return;
+        } catch (err) {
+          console.error(`Failed to load models (attempt ${i + 1}/${retries}):`, err);
+          if (i < retries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          } else {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setError(`Failed to load available models: ${errorMessage}`);
+          }
+        }
+      }
+    };
+    loadWithRetry();
   }, []);
-
-  const loadModels = async () => {
-    try {
-      const models: ModelInfo[] = await invoke("get_available_models");
-      // Only show downloadable models for onboarding
-      setAvailableModels(models.filter((m) => !m.is_downloaded));
-    } catch (err) {
-      console.error("Failed to load models:", err);
-      setError("Failed to load available models");
-    }
-  };
 
   const handleDownloadModel = async (modelId: string) => {
     setDownloading(true);

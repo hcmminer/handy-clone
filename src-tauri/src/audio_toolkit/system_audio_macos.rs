@@ -1,5 +1,6 @@
-// macOS System Audio Capture using ScreenCaptureKit
-// This requires macOS 13+ (Ventura)
+// macOS System Audio Capture
+// Strategy 1: Try BlackHole virtual audio device (recommended - more reliable)
+// Strategy 2: Fallback to ScreenCaptureKit (requires macOS 13+ and Screen Recording permission)
 
 use anyhow::{anyhow, Result};
 use std::collections::VecDeque;
@@ -12,13 +13,21 @@ use crate::audio_toolkit::system_audio::SystemAudioCapture;
 use crate::utils;
 use tauri::{AppHandle, Emitter};
 
-/// macOS implementation using ScreenCaptureKit
+use cpal::{
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+    Device, Sample, SizedSample,
+};
+
+/// macOS implementation - tries BlackHole first, then ScreenCaptureKit
 pub struct MacOSSystemAudio {
     is_capturing: bool,
     permission_denied: bool, // Track if permission was denied
     sample_buffer: Arc<Mutex<VecDeque<f32>>>,
     capture_process: Option<Child>,
     app_handle: AppHandle,
+    use_blackhole: bool, // Whether we're using BlackHole or ScreenCaptureKit
+    blackhole_thread: Option<thread::JoinHandle<()>>, // Thread that keeps BlackHole stream alive
+    blackhole_stop_tx: Option<std::sync::mpsc::Sender<()>>, // Channel to signal stop
 }
 
 impl MacOSSystemAudio {
@@ -29,11 +38,133 @@ impl MacOSSystemAudio {
             sample_buffer: Arc::new(Mutex::new(VecDeque::new())),
             capture_process: None,
             app_handle: app.clone(),
+            use_blackhole: false,
+            blackhole_thread: None,
+            blackhole_stop_tx: None,
         })
     }
     
     pub fn is_permission_denied(&self) -> bool {
         self.permission_denied
+    }
+    
+    /// Try to find BlackHole device
+    fn find_blackhole_device() -> Option<Device> {
+        let host = crate::audio_toolkit::get_cpal_host();
+        if let Ok(devices) = host.input_devices() {
+            for device in devices {
+                if let Ok(name) = device.name() {
+                    if name.contains("BlackHole") || name.contains("blackhole") {
+                        log::info!("✅ Found BlackHole device: {}", name);
+                        return Some(device);
+                    }
+                }
+            }
+        }
+        log::info!("⚠️  BlackHole device not found. Will try ScreenCaptureKit.");
+        None
+    }
+    
+    /// Start capture from BlackHole device
+    fn start_blackhole_capture(&mut self, device: Device) -> Result<()> {
+        log::info!("🎯 Starting BlackHole capture...");
+        
+        let config = device.default_input_config()
+            .map_err(|e| anyhow!("Failed to get BlackHole config: {}", e))?;
+        
+        let sample_rate = config.sample_rate().0;
+        let channels = config.channels() as usize;
+        
+        log::info!("📊 BlackHole config: sample_rate={}, channels={}, format={:?}", 
+            sample_rate, channels, config.sample_format());
+        
+        let buffer = self.sample_buffer.clone();
+        
+        // Create stream in thread worker (like AudioRecorder does)
+        // This avoids Send issues since stream stays in the thread
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stream_handle = thread::spawn(move || {
+            // Build and start stream in this thread
+            let stream_result: Result<cpal::Stream, cpal::BuildStreamError> = match config.sample_format() {
+                cpal::SampleFormat::F32 => {
+                    Self::build_blackhole_stream_in_thread::<f32>(&device, &config, buffer.clone(), channels)
+                }
+                cpal::SampleFormat::I16 => {
+                    Self::build_blackhole_stream_in_thread::<i16>(&device, &config, buffer.clone(), channels)
+                }
+                cpal::SampleFormat::I32 => {
+                    Self::build_blackhole_stream_in_thread::<i32>(&device, &config, buffer.clone(), channels)
+                }
+                _ => {
+                    log::error!("Unsupported BlackHole sample format: {:?}", config.sample_format());
+                    return; // Exit thread if unsupported format
+                }
+            };
+            
+            match stream_result {
+                Ok(stream) => {
+                    if let Err(e) = stream.play() {
+                        log::error!("Failed to start BlackHole stream: {}", e);
+                        return;
+                    }
+                    log::info!("✅ BlackHole stream started in worker thread");
+                    
+                    // Keep stream alive - wait for stop signal
+                    let _stream = stream; // Stream stays alive as long as this variable exists
+                    let _ = rx.recv(); // Wait for stop signal
+                    // Stream will be dropped here
+                    log::info!("BlackHole stream stopped");
+                }
+                Err(e) => {
+                    log::error!("Failed to build BlackHole stream: {}", e);
+                }
+            }
+        });
+        
+        // Store sender to signal stop later
+        self.blackhole_thread = Some(stream_handle);
+        self.blackhole_stop_tx = Some(tx);
+        self.use_blackhole = true;
+        self.is_capturing = true;
+        
+        log::info!("✅ BlackHole capture started successfully!");
+        Ok(())
+    }
+    
+    fn build_blackhole_stream_in_thread<T>(
+        device: &Device,
+        config: &cpal::SupportedStreamConfig,
+        buffer: Arc<Mutex<VecDeque<f32>>>,
+        channels: usize,
+    ) -> Result<cpal::Stream, cpal::BuildStreamError>
+    where
+        T: Sample + SizedSample + Send + 'static,
+        f32: cpal::FromSample<T>,
+    {
+        let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
+            let mut buf = buffer.lock().unwrap();
+            
+            if channels == 1 {
+                buf.extend(data.iter().map(|&sample| sample.to_sample::<f32>()));
+            } else {
+                // Convert to mono
+                for frame in data.chunks_exact(channels) {
+                    let mono_sample = frame
+                        .iter()
+                        .map(|&sample| sample.to_sample::<f32>())
+                        .sum::<f32>()
+                        / channels as f32;
+                    buf.push_back(mono_sample);
+                }
+            }
+        };
+        
+        device.build_input_stream(
+            &config.clone().into(),
+            stream_cb,
+            |err| log::error!("BlackHole stream error: {}", err),
+            None,
+        )
     }
 }
 
@@ -43,6 +174,22 @@ impl SystemAudioCapture for MacOSSystemAudio {
             return Ok(());
         }
 
+        // Strategy 1: Try BlackHole first (more reliable)
+        if let Some(blackhole_device) = Self::find_blackhole_device() {
+            match self.start_blackhole_capture(blackhole_device) {
+                Ok(()) => {
+                    log::info!("✅ Using BlackHole for system audio capture");
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("⚠️  Failed to start BlackHole capture: {}. Falling back to ScreenCaptureKit.", e);
+                }
+            }
+        }
+        
+        // Strategy 2: Fallback to ScreenCaptureKit
+        log::info!("🔄 Falling back to ScreenCaptureKit...");
+        
         // Try to start ScreenCaptureKit helper binary
         // First check in app bundle Resources (for production builds)
         let exe_path = std::env::current_exe()?;
@@ -253,13 +400,27 @@ impl SystemAudioCapture for MacOSSystemAudio {
             return Ok(());
         }
 
-        if let Some(mut child) = self.capture_process.take() {
-            log::info!("Stopping SCK helper");
-            let _ = child.kill();
-            let _ = child.wait();
+        if self.use_blackhole {
+            // Stop BlackHole stream by signaling stop
+            if let Some(tx) = self.blackhole_stop_tx.take() {
+                log::info!("Stopping BlackHole stream");
+                let _ = tx.send(()); // Signal thread to stop
+            }
+            // Wait for thread to finish
+            if let Some(thread_handle) = self.blackhole_thread.take() {
+                let _ = thread_handle.join(); // Wait for thread to finish (drops stream)
+            }
+        } else {
+            // Stop ScreenCaptureKit helper
+            if let Some(mut child) = self.capture_process.take() {
+                log::info!("Stopping SCK helper");
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
 
         self.is_capturing = false;
+        self.use_blackhole = false;
         Ok(())
     }
 
@@ -288,8 +449,19 @@ impl SystemAudioCapture for MacOSSystemAudio {
         // Drain all samples
         let sample_count = buffer.len();
         let samples: Vec<f32> = buffer.drain(..).collect();
-        // Always log when we read samples - this is important
-        log::info!("✅ [SystemCapture] Read {} samples from buffer ({}s audio at 48kHz)", sample_count, sample_count as f32 / 48000.0);
+        
+        // Log periodically (every 100 reads) to avoid spam
+        static READ_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = READ_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count % 100 == 0 {
+            let sample_rate = if self.use_blackhole { 48000 } else { 48000 }; // Both are 48kHz typically
+            log::info!("✅ [SystemCapture] Read {} samples from buffer ({}s audio at {}kHz) - method: {}", 
+                sample_count, 
+                sample_count as f32 / sample_rate as f32,
+                sample_rate,
+                if self.use_blackhole { "BlackHole" } else { "ScreenCaptureKit" }
+            );
+        }
         Ok(Some(samples))
     }
 

@@ -430,10 +430,27 @@ impl AudioRecordingManager {
                                     };
                                     
                                         if !samples_to_transcribe.is_empty() {
-                                            info!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept)",
+                                            // Calculate RMS level to check if audio has actual sound
+                                            let rms = (samples_to_transcribe.iter()
+                                                .map(|&s| s * s)
+                                                .sum::<f32>() / samples_to_transcribe.len() as f32)
+                                                .sqrt();
+                                            let max_amplitude = samples_to_transcribe.iter()
+                                                .map(|&s| s.abs())
+                                                .fold(0.0f32, |a, b| a.max(b));
+                                            
+                                            info!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept) - RMS: {:.6}, Max: {:.6}",
                                                 samples_to_transcribe.len(),
                                                 samples_to_transcribe.len() / 16000,
-                                                accumulated_buffer.len() / 16000);
+                                                accumulated_buffer.len() / 16000,
+                                                rms,
+                                                max_amplitude);
+                                            
+                                            // Warn if audio seems silent
+                                            if rms < 0.001 && max_amplitude < 0.01 {
+                                                warn!("⚠️ [Auto-transcription] Audio appears to be silent (RMS: {:.6}, Max: {:.6}). Please check Sound preferences: Output should be set to BlackHole 2ch", rms, max_amplitude);
+                                                let _ = app_handle.emit("log-update", format!("⚠️ [Auto-transcription] Audio appears silent. Please set Sound Output to BlackHole 2ch in System Settings"));
+                                            }
                                         
                                         // Emit log event to frontend
                                         let _ = app_handle.emit("log-update", format!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept)",

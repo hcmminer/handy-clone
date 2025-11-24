@@ -55,6 +55,8 @@
   - **Giải pháp:** User cần cấu hình Sound Output sang "BlackHole 2ch" trong System Settings
   - **Lưu ý:** macOS không cho phép programmatic set output device, cần cấu hình thủ công
   - **Auto-fallback:** ✅ App tự động check audio sau 2s, nếu silence thì tự động fallback sang ScreenCaptureKit
+  - **Auto-open System Settings:** ✅ App tự động mở System Settings > Sound khi BlackHole không có audio để giúp user cấu hình
+  - **Enhanced logging:** ✅ Thêm RMS/Max logging trong periodic callbacks để monitor audio quality
   - ✅ Thêm logging chi tiết để debug (đã thêm - xác nhận vấn đề)
   - ✅ Xác nhận `streamDidStart` được gọi (đã xác nhận - vẫn không có audio buffers)
   - ⚠️ **Cần xem xét cách khác để capture system audio:**

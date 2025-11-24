@@ -44,15 +44,15 @@ export const LiveCaptionViewer: React.FC = () => {
       unlistenCaption.then((fn) => fn());
       unlistenLog.then((fn) => fn());
     };
-  }, [settings?.live_caption_enabled]);
+  }, [settings?.live_caption_enabled, addLog]);
 
-  const addLog = (type: 'info' | 'warn' | 'error' | 'debug', message: string) => {
+  const addLog = React.useCallback((type: 'info' | 'warn' | 'error' | 'debug', message: string) => {
     const time = new Date().toLocaleTimeString();
     setLogs((prev) => {
       const newLogs = [...prev, { time, message, type }];
       return newLogs.slice(-maxLogs);
     });
-  };
+  }, []);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -93,7 +93,7 @@ export const LiveCaptionViewer: React.FC = () => {
       console.warn = originalWarn;
       console.error = originalError;
     };
-  }, []);
+  }, [addLog]);
 
   const clearLogs = () => {
     setLogs([]);

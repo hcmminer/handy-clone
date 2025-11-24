@@ -53,6 +53,39 @@ impl MacOSSystemAudio {
         let host = crate::audio_toolkit::get_cpal_host();
         log::info!("🔍 [BlackHole] Enumerating input devices...");
         
+        // Also check default input device
+        if let Some(default_input) = host.default_input_device() {
+            if let Ok(name) = default_input.name() {
+                log::info!("🔍 [BlackHole] Default input device: {}", name);
+            }
+        }
+        
+        // Also check output devices (for debugging)
+        log::info!("🔍 [BlackHole] Enumerating output devices...");
+        if let Ok(output_devices) = host.output_devices() {
+            let mut output_list = Vec::new();
+            for device in output_devices {
+                if let Ok(name) = device.name() {
+                    output_list.push(name.clone());
+                    log::info!("🔍 [BlackHole] Found output device: {}", name);
+                }
+            }
+            log::info!("📋 [BlackHole] All output devices: {:?}", output_list);
+            
+            // Check default output
+            if let Some(default_output) = host.default_output_device() {
+                if let Ok(name) = default_output.name() {
+                    log::info!("🔍 [BlackHole] Default output device: {}", name);
+                    if !name.contains("BlackHole") && !name.contains("blackhole") {
+                        log::warn!("⚠️ [BlackHole] Default output is NOT BlackHole (current: {}). Audio will not be routed to BlackHole!", name);
+                        log::warn!("⚠️ [BlackHole] Please set Sound Output to 'BlackHole 2ch' in System Settings > Sound > Output");
+                    } else {
+                        log::info!("✅ [BlackHole] Default output is BlackHole - audio should be routed correctly");
+                    }
+                }
+            }
+        }
+        
         if let Ok(devices) = host.input_devices() {
             let mut device_list = Vec::new();
             for device in devices {

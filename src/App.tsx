@@ -51,27 +51,8 @@ function App() {
   }, [settings?.debug_mode, updateSetting]);
 
   const checkOnboardingStatus = async () => {
-    // Wait for Tauri to be ready
-    const waitForTauri = async (): Promise<boolean> => {
-      for (let i = 0; i < 10; i++) {
-        if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-          return true;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return false;
-    };
-
     // Retry with delay to ensure backend is ready
     const checkWithRetry = async (retries = 5, delay = 500) => {
-      // First wait for Tauri to be ready
-      const tauriReady = await waitForTauri();
-      if (!tauriReady) {
-        console.error("Tauri is not available");
-        setShowOnboarding(true);
-        return;
-      }
-
       for (let i = 0; i < retries; i++) {
         try {
           // Always check if they have any models available
@@ -80,8 +61,27 @@ function App() {
           setShowOnboarding(!modelsAvailable);
           return;
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`Failed to check onboarding status (attempt ${i + 1}/${retries}):`, error);
-          if (i < retries - 1) {
+          
+          // If it's a Tauri not ready error, wait longer and retry
+          if (errorMessage.includes("Cannot read properties of undefined") || 
+              errorMessage.includes("invoke")) {
+            if (i < retries - 1) {
+              await new Promise((resolve) => setTimeout(resolve, delay * 2)); // Wait longer
+            } else {
+              // Final attempt after longer delay
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              try {
+                const modelsAvailable: boolean = await invoke("has_any_models_available");
+                setShowOnboarding(!modelsAvailable);
+                return;
+              } catch (finalErr) {
+                console.warn("Final attempt failed, showing onboarding as fallback");
+                setShowOnboarding(true);
+              }
+            }
+          } else if (i < retries - 1) {
             await new Promise((resolve) => setTimeout(resolve, delay));
           } else {
             // If all retries fail, show onboarding as fallback

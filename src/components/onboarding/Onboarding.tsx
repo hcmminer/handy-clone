@@ -14,26 +14,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Wait for Tauri to be ready
-    const waitForTauri = async (): Promise<boolean> => {
-      for (let i = 0; i < 10; i++) {
-        if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-          return true;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return false;
-    };
-
     // Retry loading models with delay to ensure backend is ready
     const loadWithRetry = async (retries = 5, delay = 500) => {
-      // First wait for Tauri to be ready
-      const tauriReady = await waitForTauri();
-      if (!tauriReady) {
-        setError("Tauri is not available. Please refresh the page.");
-        return;
-      }
-
       for (let i = 0; i < retries; i++) {
         try {
           const models: ModelInfo[] = await invoke("get_available_models");
@@ -47,7 +29,23 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
             await new Promise((resolve) => setTimeout(resolve, delay));
           } else {
             const errorMessage = err instanceof Error ? err.message : String(err);
-            setError(`Failed to load available models: ${errorMessage}`);
+            // Only show error if it's not about invoke being undefined (Tauri not ready)
+            if (!errorMessage.includes("Cannot read properties of undefined") && 
+                !errorMessage.includes("invoke")) {
+              setError(`Failed to load available models: ${errorMessage}`);
+            } else {
+              // Tauri not ready yet, try one more time after longer delay
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              try {
+                const models: ModelInfo[] = await invoke("get_available_models");
+                setAvailableModels(models.filter((m) => !m.is_downloaded));
+                setError(null);
+                return;
+              } catch (finalErr) {
+                const finalError = finalErr instanceof Error ? finalErr.message : String(finalErr);
+                setError(`Failed to load available models: ${finalError}`);
+              }
+            }
           }
         }
       }

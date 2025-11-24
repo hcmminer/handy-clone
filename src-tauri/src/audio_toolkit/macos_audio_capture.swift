@@ -317,13 +317,6 @@ func runCapture() {
             log("✅ PERMISSION GRANTED - Found \(content.displays.count) displays")
             log("✅ Found \(content.applications.count) applications")
             
-            // Try to capture from all applications instead of display
-            // SCK may not capture audio from display, but can capture from applications
-            guard let display = content.displays.first else {
-                log("❌ No display found")
-                exit(1)
-            }
-            
             // Try capturing from all applications that can share content
             let shareableApps = content.applications.filter { app in
                 !app.applicationName.isEmpty
@@ -335,36 +328,55 @@ func runCapture() {
                 log("Applications: \(appNames)")
             }
             
-            // Try both displays if available (user has 2 monitors)
-            log("Trying to capture from display 1 (ID: \(display.displayID))")
-            if content.displays.count > 1 {
-                log("Also found display 2 (ID: \(content.displays[1].displayID))")
-                log("Note: Audio capture may work better from the display where audio is playing")
-            }
-            
             // Try multiple strategies to capture system audio
             // Strategy 1: Try all applications (most reliable for system audio on macOS)
-            // Strategy 2: Try Chrome specifically
-            // Strategy 3: Fallback to display
+            // Strategy 2: Try display if available
             var filter: SCContentFilter
             
-            // NEW STRATEGY: Try display capture FIRST (may work better for system audio)
-            // Then fallback to application capture if needed
-            // Display capture sometimes works better for system audio on macOS
-            let hasChrome = shareableApps.contains { app in
-                app.applicationName.contains("Chrome") || app.applicationName.contains("Google Chrome")
-            }
-            
-            // Try display capture first - it may work better for system audio
-            log("🎯 Strategy 1: Display capture (trying first for system audio)")
-            log("   💡 Display capture may work better for system audio on macOS")
-            log("   💡 Display ID: \(display.displayID)")
-            filter = SCContentFilter(display: display, excludingWindows: [])
-            
-            // Note: We'll try display capture first, but keep application capture as fallback if needed
-            if shareableApps.count > 0 && hasChrome {
-                log("   💡 Chrome is available in shareableApps: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
-                log("   💡 If display capture doesn't work, we can try application capture")
+            // If we have applications, try application capture first (more reliable for system audio)
+            if shareableApps.count > 0 {
+                log("🎯 Strategy 1: Application capture (trying first for system audio)")
+                log("   💡 Application capture is more reliable for system audio on macOS")
+                log("   💡 Capturing from \(shareableApps.count) applications")
+                
+                // Try to get display if available, otherwise use nil
+                let display = content.displays.first
+                if let display = display {
+                    log("   💡 Using display ID: \(display.displayID) as base")
+                    filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
+                } else {
+                    log("   ⚠️  No display found, but trying application capture anyway")
+                    log("   💡 This may work if applications are shareable")
+                    // Try to create filter with applications only (may not work without display)
+                    // Fallback: try to get any available display or use main display
+                    if let mainDisplay = SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true).displays.first {
+                        log("   💡 Found main display via alternative method: \(mainDisplay.displayID)")
+                        filter = SCContentFilter(display: mainDisplay, including: shareableApps, exceptingWindows: [])
+                    } else {
+                        log("❌ Cannot create filter: No display and cannot get main display")
+                        log("💡 This may happen if app is running headless or no display is available")
+                        log("💡 Please ensure a display is connected and try again")
+                        exit(1)
+                    }
+                }
+            } else if let display = content.displays.first {
+                // Fallback: Try display capture if no applications
+                log("🎯 Strategy 2: Display capture (no applications available)")
+                log("   💡 Display ID: \(display.displayID)")
+                filter = SCContentFilter(display: display, excludingWindows: [])
+                
+                if content.displays.count > 1 {
+                    log("Also found display 2 (ID: \(content.displays[1].displayID))")
+                    log("Note: Audio capture may work better from the display where audio is playing")
+                }
+            } else {
+                log("❌ No display found and no applications available")
+                log("💡 This may happen if:")
+                log("   1. App is running headless (no display connected)")
+                log("   2. Screen Recording permission is not fully granted")
+                log("   3. No applications are currently shareable")
+                log("💡 Please ensure a display is connected and try again")
+                exit(1)
             }
             
             let config = SCStreamConfiguration()
@@ -404,10 +416,17 @@ func runCapture() {
             if shareableApps.count > 0 {
                 log("   - filter type: application capture (capturing from \(shareableApps.count) apps)")
                 log("   - apps: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
+                if let display = content.displays.first {
+                    log("   - display: \(display.displayID)")
+                } else {
+                    log("   - display: using alternative method to get display")
+                }
             } else {
                 log("   - filter type: display capture")
+                if let display = content.displays.first {
+                    log("   - display: \(display.displayID)")
+                }
             }
-            log("   - display: \(display.displayID)")
             
             // Add stream output BEFORE starting capture
             log("🔍 Adding stream output for audio type...")

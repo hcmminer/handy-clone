@@ -376,11 +376,11 @@ impl AudioRecordingManager {
                                         accumulated_buffer.drain(..).collect()
                                     };
                                     
-                                    if !samples_to_transcribe.is_empty() {
-                                        info!("Auto-transcribing {} samples ({}s audio, {}s overlap kept)", 
-                                            samples_to_transcribe.len(), 
-                                            samples_to_transcribe.len() / 16000,
-                                            accumulated_buffer.len() / 16000);
+                                        if !samples_to_transcribe.is_empty() {
+                                            info!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept)",
+                                                samples_to_transcribe.len(),
+                                                samples_to_transcribe.len() / 16000,
+                                                accumulated_buffer.len() / 16000);
                                 
                                         // Trigger transcription
                                         let tm = app_handle.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
@@ -403,13 +403,17 @@ impl AudioRecordingManager {
                                             continue;
                                         }
                                         
+                                        info!("🔄 [Auto-transcription] Starting transcription for {} samples ({}s)", 
+                                            samples_to_transcribe.len(),
+                                            samples_to_transcribe.len() / 16000);
                                         match tm.transcribe(samples_to_transcribe) {
                                             Ok(transcription) => {
                                                 let trimmed = transcription.trim();
+                                                info!("📝 [Auto-transcription] Raw transcription received (len={}): '{}'", transcription.len(), transcription);
                                                 // Always log transcription results - this is important!
                                                 if !trimmed.is_empty() && trimmed.len() > 1 {
                                                     // Only process if transcription has meaningful content (more than 1 char)
-                                                    info!("🎯 Auto-transcription result (len={}): '{}'", trimmed.len(), trimmed);
+                                                    info!("🎯 [Auto-transcription] Result (len={}): '{}'", trimmed.len(), trimmed);
                                                     
                                                     // Save to history (async)
                                                     let hm_clone = Arc::clone(&hm);

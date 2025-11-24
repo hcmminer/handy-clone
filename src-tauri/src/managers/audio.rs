@@ -263,13 +263,22 @@ impl AudioRecordingManager {
             {
                 info!("Initializing system audio capture");
                 let mut capture = MacOSSystemAudio::new(&self.app_handle)?;
-                capture.start_capture()?;
-                *self.system_capture.lock().unwrap() = Some(Box::new(capture));
-                *open_flag = true;
-                info!(
-                    "System audio capture initialized in {:?}",
-                    start_time.elapsed()
-                );
+                match capture.start_capture() {
+                    Ok(()) => {
+                        *self.system_capture.lock().unwrap() = Some(Box::new(capture));
+                        *open_flag = true;
+                        info!(
+                            "System audio capture initialized in {:?}",
+                            start_time.elapsed()
+                        );
+                    },
+                    Err(e) => {
+                        error!("Failed to start system audio capture: {}", e);
+                        *open_flag = false;
+                        // Don't set system_capture if start failed
+                        return Err(e);
+                    }
+                }
                 
                 // Auto-start recording in always-on mode with system audio
                 let settings = get_settings(&self.app_handle);
@@ -333,7 +342,8 @@ impl AudioRecordingManager {
                                             match capture.read_samples() {
                                                 Ok(Some(s)) => {
                                                     if !s.is_empty() {
-                                                        debug!("Auto-transcription: Read {} new samples from system capture", s.len());
+                                                        info!("🎙️ [Auto-transcription] ✅ Read {} new samples from system capture ({}s audio)", s.len(), s.len() / 16000);
+                                                        let _ = app_handle.emit("log-update", format!("🎙️ [Auto-transcription] ✅ Read {} new samples from system capture ({}s audio)", s.len(), s.len() / 16000));
                                                         Some(s)
                                                     } else {
                                                         debug!("Auto-transcription: System capture returned empty samples");
@@ -342,15 +352,24 @@ impl AudioRecordingManager {
                                                 },
                                                 Ok(None) => {
                                                     // Buffer is empty - this is normal if no audio is playing
+                                                    // Log periodically to show we're checking
+                                                    static EMPTY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                                    let count = EMPTY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                                    if count % 10 == 0 {
+                                                        info!("🔍 [Auto-transcription] System capture buffer is empty (checked {} times) - SCStream may not be sending audio buffers", count + 1);
+                                                        let _ = app_handle.emit("log-update", format!("🔍 [Auto-transcription] Buffer empty (checked {} times) - Please ensure audio is playing from Chrome or another app", count + 1));
+                                                    }
                                                     None
                                                 },
                                                 Err(e) => {
-                                                    error!("Auto-transcription: Failed to read samples from system capture: {}", e);
+                                                    error!("❌ [Auto-transcription] Failed to read samples from system capture: {}", e);
+                                                    let _ = app_handle.emit("log-update", format!("❌ [Auto-transcription] Failed to read samples: {}", e));
                                                     None
                                                 }
                                             }
                                         } else {
-                                            warn!("Auto-transcription: System capture not available");
+                                            warn!("⚠️ [Auto-transcription] System capture not available");
+                                            let _ = app_handle.emit("log-update", "⚠️ [Auto-transcription] System capture not available");
                                             None
                                         }
                                     }

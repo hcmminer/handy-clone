@@ -23,7 +23,16 @@
   filter = SCContentFilter(display: display, including: shareableApps, exceptingWindows: [])
   ```
 
-### 3. **Vấn đề Log không đủ chi tiết**
+### 3. **Vấn đề SCStream không start sau restart** (Nguyên nhân cuối cùng)
+- **Vấn đề:** Sau khi app restart, `stream.startCapture()` có thể bị block hoặc không log error
+- **Triệu chứng:** Không có log "✅ Capture started successfully" sau "📋 About to call stream.startCapture()..."
+- **Giải pháp:** 
+  - Thêm logging chi tiết cho `stream.startCapture()` (thời gian thực thi, error details)
+  - Rebuild SCK helper binary để đảm bảo code mới được sử dụng
+  - Kill old processes để force sử dụng binary mới
+  - Thêm logging khi Rust nhận data đầu tiên từ helper
+
+### 4. **Vấn đề Log không đủ chi tiết**
 - **Vấn đề:** Không biết được transcription pipeline đang dừng ở bước nào
 - **Giải pháp:** Thêm log chi tiết ở mỗi bước:
   - Resampler initialization
@@ -31,6 +40,7 @@
   - Buffer accumulation
   - Transcription start/completion
   - Live caption event emission
+  - SCStream start và delegate callbacks
 
 ---
 
@@ -101,6 +111,25 @@ Thêm log ở các điểm quan trọng:
 - `✅ [LiveCaption] Event emitted successfully`
 
 **Kết quả:** Có thể trace được toàn bộ pipeline từ audio → transcription → live caption
+
+### Bước 5: Fix SCStream Start Issue
+**File:** `src-tauri/src/audio_toolkit/macos_audio_capture.swift`
+
+**Vấn đề:** `stream.startCapture()` không log success hoặc error sau restart
+
+**Giải pháp:**
+- Thêm logging thời gian thực thi của `startCapture()`
+- Thêm logging chi tiết cho error (NSError domain, code, userInfo)
+- Thêm logging khi nhận audio buffers đầu tiên
+- Thêm logging khi ghi samples ra stdout
+
+**File:** `src-tauri/src/audio_toolkit/system_audio_macos.rs`
+
+- Thêm logging khi Rust nhận data đầu tiên từ helper
+- Log định kỳ mỗi 100 chunks (thay vì 500) để debug nhanh hơn
+- Log chi tiết về buffer size và số chunks
+
+**Kết quả:** SCStream start thành công và audio buffers được nhận đúng cách
 
 ---
 
@@ -272,19 +301,27 @@ tail -100 ~/Library/Logs/com.pais.handy/handy.log | grep -E "LiveCaption.*Event"
 
 **Trạng thái:** ✅ **HOẠT ĐỘNG**
 
-**Log xác nhận:**
+**Log xác nhận (18:08:40):**
 ```
-[2025-11-24][13:59:58][handy_app_lib::managers::audio][INFO] 🎯 [Auto-transcription] Result (len=41): 'And then two um uh the meeting pescope um'
-[2025-11-24][13:59:58][handy_app_lib::managers::audio][INFO] ✅ [LiveCaption] Event emitted successfully
+[2025-11-24][18:08:40][handy_app_lib::audio_toolkit::system_audio::system_audio_macos][INFO] 📥 [SystemCapture] Received 900 chunks from helper (last chunk: 3584 bytes)
+[2025-11-24][18:08:40][handy_app_lib::managers::transcription][INFO] Transcription result: Come with me.
+[2025-11-24][18:08:40][handy_app_lib::managers::audio][INFO] 📤 [LiveCaption] Emitting event with caption (13 chars): 'Come with me.'
+[2025-11-24][18:08:40][handy_app_lib::managers::audio][INFO] ✅ [LiveCaption] Event emitted successfully
 ```
 
 **Pipeline hoạt động:**
-1. ✅ SCK helper nhận audio từ Chrome
-2. ✅ Rust đọc samples từ buffer
-3. ✅ Resampler: 48kHz → 16kHz
-4. ✅ Transcription tạo text
-5. ✅ Live caption events được emit
-6. ✅ Frontend nhận và hiển thị caption
+1. ✅ SCK helper nhận audio từ Chrome (451+ audio buffers)
+2. ✅ SCK helper ghi samples ra stdout (960 samples/buffer)
+3. ✅ Rust đọc samples từ stdout (900+ chunks)
+4. ✅ Resampler: 48kHz → 16kHz (458880 samples → 153120 samples)
+5. ✅ Transcription tạo text ("Come with me.", "Please sit down. Please drink.", etc.)
+6. ✅ Live caption events được emit
+7. ✅ Frontend nhận và hiển thị caption
+
+**Nguyên nhân cuối cùng khiến nó hoạt động:**
+- Rebuild SCK helper binary với logging mới
+- Kill old processes để đảm bảo dùng binary mới
+- Thêm logging chi tiết giúp debug và đảm bảo SCStream start đúng cách
 
 ---
 

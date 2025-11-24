@@ -18,6 +18,8 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
     
     func streamDidStart(_ stream: SCStream) {
         log("✅ SCStreamDelegate: streamDidStart called - stream is active!")
+        log("   📊 Delegate state: bufferCount=\(bufferCount), nonAudioCount=\(nonAudioCount)")
+        log("   💡 Stream is now active and should start receiving buffers")
     }
     
     var bufferCount = 0
@@ -29,6 +31,12 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
             if nonAudioCount == 1 {
                 log("⚠️ WARNING: Received non-audio sample buffer (type: \(type.rawValue))")
                 log("   This means SCStream is working but not sending audio buffers")
+                log("   💡 This is a known macOS limitation - audio capture may not work from all sources")
+                log("   💡 Try: 1) Ensure audio is playing from Chrome, 2) Try capturing from display instead of apps")
+            }
+            // Log every 50 non-audio buffers to confirm stream is working (more frequent for debugging)
+            if nonAudioCount % 50 == 0 {
+                log("   📊 Stream status: \(nonAudioCount) non-audio buffers, \(bufferCount) audio buffers")
             }
             return
         }
@@ -38,10 +46,11 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
             log("✅ First audio buffer received!")
             log("   - Buffer count: \(bufferCount)")
             log("   - Non-audio buffers received: \(nonAudioCount)")
+            log("   🎉 Audio capture is working! Buffers will be sent to Rust now.")
         }
-        // Reduce log frequency - only log every 500 buffers instead of 100
-        if bufferCount % 500 == 0 {
-            log("Received \(bufferCount) audio buffers")
+        // Log more frequently for debugging (every 100 buffers instead of 500)
+        if bufferCount % 100 == 0 {
+            log("📊 Received \(bufferCount) audio buffers (still receiving audio)")
         }
         
         // Get audio format description
@@ -75,8 +84,18 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
         )
         
         guard status == noErr && bufferListSizeNeeded > 0 else {
-            log("Failed to get required buffer size: \(status)")
+            log("❌ Failed to get required buffer size: \(status)")
             return
+        }
+        
+        // Log first buffer details
+        if bufferCount == 1 {
+            log("📊 First audio buffer details:")
+            log("   - Required buffer size: \(bufferListSizeNeeded) bytes")
+            let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+            log("   - Number of samples in buffer: \(numSamples)")
+            let duration = CMSampleBufferGetDuration(sampleBuffer)
+            log("   - Duration: \(CMTimeGetSeconds(duration))s")
         }
         
         // Allocate buffer with correct size
@@ -116,6 +135,13 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
             guard let data = buffer.mData else { continue }
             let byteCount = Int(buffer.mDataByteSize)
             
+            // Log first buffer details for debugging
+            if bufferCount == 1 {
+                log("📊 First audio buffer details:")
+                log("   - Byte count: \(byteCount) bytes")
+                log("   - Format: sampleRate=\(asbd.mSampleRate), channels=\(Int(asbd.mChannelsPerFrame))")
+            }
+            
             // Convert based on format
             let floatSamples: [Float32]
             
@@ -152,11 +178,21 @@ class AudioCaptureDelegate: NSObject, SCStreamDelegate, SCStreamOutput {
                 continue
             }
             
-                // Write Float32 samples as little-endian bytes
-                floatSamples.withUnsafeBufferPointer { ptr in
-                    let data = Data(bytes: ptr.baseAddress!, count: ptr.count * MemoryLayout<Float32>.size)
-                    FileHandle.standardOutput.write(data)
-                }
+            // Log first buffer write for debugging
+            if bufferCount == 1 {
+                log("📤 Writing \(floatSamples.count) samples to stdout (first buffer)")
+            }
+            
+            // Write Float32 samples as little-endian bytes
+            floatSamples.withUnsafeBufferPointer { ptr in
+                let data = Data(bytes: ptr.baseAddress!, count: ptr.count * MemoryLayout<Float32>.size)
+                FileHandle.standardOutput.write(data)
+            }
+            
+            // Log periodically to confirm we're writing data
+            if bufferCount % 100 == 0 {
+                log("📤 Written \(bufferCount) buffers to stdout (still receiving audio)")
+            }
             }
         }
     }
@@ -184,33 +220,43 @@ func runCapture() {
                     log("✅ PERMISSION GRANTED!")
                 } catch {
                     log("❌ PERMISSION DENIED: \(error.localizedDescription)")
-                    // Show alert dialog on main thread - keep showing until granted
-                    await MainActor.run {
+                    // Auto-open System Settings immediately when permission is denied
+                    // This is more user-friendly than showing an alert
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                        NSWorkspace.shared.open(url)
+                        log("✅ Auto-opened System Settings > Privacy & Security > Screen Recording")
+                        log("💡 Please grant permission for Terminal (if running from dev) or Handy (if running built app)")
+                        log("💡 Then restart the app")
+                    }
+                    
+                    // Also show alert dialog on main thread
+                    DispatchQueue.main.sync {
                         let alert = NSAlert()
                         alert.messageText = "Screen Recording Permission Required"
-                        alert.informativeText = "Handy needs Screen Recording permission to capture system audio.\n\nPlease:\n1. Click 'Open System Settings'\n2. Enable permission for this app (Terminal or Handy)\n3. Click 'Granted' after enabling permission\n\nThis dialog will keep appearing until permission is granted."
+                        alert.informativeText = "Handy needs Screen Recording permission to capture system audio.\n\nSystem Settings has been opened automatically.\n\nPlease:\n1. Enable permission for Terminal (if running from dev) or Handy (if running built app)\n2. Restart the app after granting permission"
                         alert.alertStyle = .critical
-                        alert.addButton(withTitle: "Open System Settings")
-                        alert.addButton(withTitle: "Granted")
+                        alert.addButton(withTitle: "OK")
+                        alert.addButton(withTitle: "Open System Settings Again")
                         alert.addButton(withTitle: "Quit")
                         
                         let response = alert.runModal()
-                        if response == .alertFirstButtonReturn {
-                            // Open System Settings to Screen Recording
+                        if response == .alertSecondButtonReturn {
+                            // Open System Settings again
                             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                                 NSWorkspace.shared.open(url)
                             }
-                            // Wait a bit for user to grant permission
-                            log("⏳ Waiting 3 seconds for user to grant permission...")
-                            Thread.sleep(forTimeInterval: 3.0)
-                        } else if response == .alertSecondButtonReturn {
-                            // User clicked "Granted" - check permission again
-                            log("✅ User clicked 'Granted', checking permission...")
-                        } else {
+                            log("⏳ Opened System Settings again")
+                        } else if response == .alertThirdButtonReturn {
                             // User clicked "Quit"
                             exit(1)
                         }
+                        // If user clicked "OK", continue (they can grant permission and restart later)
                     }
+                    
+                    // Wait a bit then exit - user needs to restart after granting permission
+                    log("⏳ Waiting 3 seconds, then exiting. Please grant permission and restart the app.")
+                    try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+                    exit(0)
                 }
             }
             
@@ -283,22 +329,45 @@ func runCapture() {
             log("   - queueDepth: \(config.queueDepth)")
             
             log("📋 Content filter:")
+            if shareableApps.count > 0 {
+                log("   - filter type: application capture (capturing from \(shareableApps.count) apps)")
+                log("   - apps: \(shareableApps.map { $0.applicationName }.joined(separator: ", "))")
+            } else {
+                log("   - filter type: display capture")
+            }
             log("   - display: \(display.displayID)")
-            log("   - filter type: display capture")
             
+            // Add stream output BEFORE starting capture
             try stream.addStreamOutput(delegate, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio-queue"))
             log("✅ Added stream output for audio type")
             
+            // Also add stream output for screen content to see if stream is working at all
+            try stream.addStreamOutput(delegate, type: .screen, sampleHandlerQueue: DispatchQueue(label: "screen-queue"))
+            log("✅ Added stream output for screen type (to verify stream is working)")
+            
             log("Starting capture...")
+            log("📋 About to call stream.startCapture()...")
+            log("⏳ This may take a moment...")
             do {
+                // Add timeout to detect if startCapture is blocking
+                let startTime = Date()
                 try await stream.startCapture()
-                log("✅ Capture started successfully")
-                log("⏳ Waiting for audio buffers...")
+                let elapsed = Date().timeIntervalSince(startTime)
+                log("✅ Capture started successfully - stream.startCapture() returned (took \(String(format: "%.2f", elapsed))s)")
+                log("⏳ Waiting for delegate callbacks...")
+                log("💡 IMPORTANT: Please make sure audio is playing from Chrome or another app")
                 log("💡 Debug: Delegate will log when streamDidStart is called")
                 log("💡 Debug: If no callbacks received, SCStream may not be sending audio")
+                log("💡 Debug: If you see non-audio buffers, stream is working but not sending audio")
+                log("💡 Debug: Will log every 30 seconds if no audio buffers received")
             } catch {
                 log("❌ Failed to start capture: \(error.localizedDescription)")
                 log("Error details: \(error)")
+                log("Error type: \(type(of: error))")
+                if let nsError = error as NSError? {
+                    log("NSError domain: \(nsError.domain), code: \(nsError.code)")
+                    log("NSError userInfo: \(nsError.userInfo)")
+                }
                 if error.localizedDescription.contains("permission") || error.localizedDescription.contains("denied") {
                     log("⚠️  This looks like a permission issue. Please grant Screen Recording permission.")
                 }
@@ -312,13 +381,20 @@ func runCapture() {
                 while true {
                     try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
                     checkCount += 1
-                    // Only log every 30 seconds if no audio yet, or every 60 seconds if audio is coming
+                    // Log every 30 seconds if no audio yet (more frequent for debugging)
                     if delegate.bufferCount == 0 && checkCount % 6 == 0 {
-                        log("Still waiting for audio... (checked \(checkCount * 5)s, bufferCount: \(delegate.bufferCount), nonAudioCount: \(delegate.nonAudioCount))")
-                        log("   - If bufferCount=0 and nonAudioCount=0, SCStream is not calling delegate at all")
-                        log("   - If nonAudioCount>0, SCStream is working but not sending audio buffers")
+                        log("⏳ Still waiting for audio... (checked \(checkCount * 5)s, bufferCount: \(delegate.bufferCount), nonAudioCount: \(delegate.nonAudioCount))")
+                        log("   📊 Status: bufferCount=\(delegate.bufferCount), nonAudioCount=\(delegate.nonAudioCount)")
+                        if delegate.nonAudioCount == 0 {
+                            log("   ⚠️ SCStream is not calling delegate at all - stream may not be active")
+                            log("   💡 Check: 1) Is streamDidStart called? 2) Is audio playing from Chrome?")
+                        } else {
+                            log("   ⚠️ SCStream is working (sending screen buffers) but not sending audio buffers")
+                            log("   💡 This is a known macOS limitation - try capturing from display instead of apps")
+                            log("   💡 Or ensure Chrome is actively playing audio with volume > 0")
+                        }
                     } else if delegate.bufferCount > 0 && checkCount % 12 == 0 {
-                        log("Audio capture active: \(delegate.bufferCount) buffers received")
+                        log("✅ Audio capture active: \(delegate.bufferCount) buffers received, \(delegate.nonAudioCount) non-audio buffers")
                     }
                 }
             }

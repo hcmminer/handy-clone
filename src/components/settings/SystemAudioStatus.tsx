@@ -20,6 +20,7 @@ export const SystemAudioStatus: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<string>("");
 
   // Query initial status when component mounts
+  // Also query again after a short delay to catch status that might have changed
   useEffect(() => {
     const queryInitialStatus = async () => {
       try {
@@ -35,14 +36,23 @@ export const SystemAudioStatus: React.FC = () => {
         console.log("📊 [SystemAudioStatus] Capture:", status.capture);
         console.log("📊 [SystemAudioStatus] Audio Detection:", status.audio_detection);
         
+        // Set permission from initial status if it's granted
+        // Backend now infers permission from capture status (if capture is active, permission is granted)
         if (status.permission === "granted") {
+          console.log("✅ [SystemAudioStatus] Setting permission from initial status: granted");
           setPermissionStatus("granted");
         }
+        
+        // Set capture status from initial status
         if (status.capture === "active") {
+          console.log("✅ [SystemAudioStatus] Setting capture from initial status: active");
           setCaptureStatus("active");
         } else if (status.capture === "waiting") {
           setCaptureStatus("waiting");
+        } else {
+          setCaptureStatus("unknown");
         }
+        
         if (status.audio_detection === "active") {
           setAudioDetectionStatus("active");
         } else if (status.audio_detection === "waiting") {
@@ -54,6 +64,14 @@ export const SystemAudioStatus: React.FC = () => {
     };
     
     queryInitialStatus();
+    
+    // Also query again after 1 second to catch status that might have changed
+    // This helps if log events were emitted before listener was ready
+    const timeout = setTimeout(() => {
+      queryInitialStatus();
+    }, 1000);
+    
+    return () => clearTimeout(timeout);
   }, []);
 
   // Listen to log events and update statuses
@@ -65,30 +83,77 @@ export const SystemAudioStatus: React.FC = () => {
       const now = new Date().toLocaleTimeString();
       setLastUpdate(now);
 
-      console.log("📥 [SystemAudioStatus] Received log:", logMessage.substring(0, 100));
-
-      // Permission status
-      if (logMessage.includes("PERMISSION GRANTED") || logMessage.includes("✅ PERMISSION GRANTED") || logMessage.includes("PERMISSION GRANTED - Found")) {
-        console.log("✅ [SystemAudioStatus] Permission granted detected!");
-        setPermissionStatus("granted");
-      } else if (logMessage.includes("PERMISSION DENIED") || logMessage.includes("❌ PERMISSION DENIED") || logMessage.includes("declined TCCs")) {
-        console.log("❌ [SystemAudioStatus] Permission denied detected!");
-        setPermissionStatus("denied");
+      // Always log received messages for debugging (but limit length to avoid spam)
+      if (logMessage.length > 0) {
+        console.log("📥 [SystemAudioStatus] Received log:", logMessage.substring(0, 150));
       }
 
-      // Capture status
-      if (logMessage.includes("Capture started successfully") || logMessage.includes("✅ Capture started")) {
-        console.log("✅ [SystemAudioStatus] Capture started detected!");
-        setCaptureStatus("active");
-      } else if (logMessage.includes("Failed to start capture") || (logMessage.includes("❌") && logMessage.includes("capture"))) {
+      // Permission status - check DENIED first to override any previous GRANTED status
+      // Check multiple patterns to catch all variations
+      // Note: Log format is "[SCK Helper] ✅ PERMISSION GRANTED!" so we need to match after prefix
+      const isDenied = logMessage.includes("PERMISSION DENIED") || 
+                       logMessage.includes("❌ PERMISSION DENIED") || 
+                       logMessage.includes("declined TCCs") || 
+                       logMessage.includes("The user declined TCCs") ||
+                       logMessage.includes("user declined TCCs");
+      
+      const isGranted = logMessage.includes("PERMISSION GRANTED") || 
+                        logMessage.includes("✅ PERMISSION GRANTED") || 
+                        logMessage.includes("PERMISSION GRANTED - Found") ||
+                        logMessage.includes("PERMISSION GRANTED!");
+      
+      if (isDenied) {
+        console.log("❌ [SystemAudioStatus] Permission denied detected! Log:", logMessage);
+        setPermissionStatus("denied");
+        // Also set capture to error if permission is denied
+        setCaptureStatus("error");
+      } else if (isGranted) {
+        console.log("✅ [SystemAudioStatus] Permission granted detected! Log:", logMessage);
+        setPermissionStatus((prev) => {
+          console.log("✅ [SystemAudioStatus] Setting permission to granted (prev:", prev, ")");
+          return "granted";
+        });
+      }
+
+      // Capture status - check using functional updates to avoid stale closures
+      if (logMessage.includes("Capture started successfully") || 
+          logMessage.includes("✅ Capture started") ||
+          logMessage.includes("Capture started")) {
+        console.log("🔍 [SystemAudioStatus] Checking capture started... Log:", logMessage);
+        // Use functional update to check current permission status
+        setPermissionStatus((prevPerm) => {
+          console.log("🔍 [SystemAudioStatus] Current permission status:", prevPerm);
+          if (prevPerm !== "denied") {
+            console.log("✅ [SystemAudioStatus] Capture started detected! Setting capture to active. Log:", logMessage);
+            setCaptureStatus((prevCap) => {
+              console.log("✅ [SystemAudioStatus] Setting capture to active (prev:", prevCap, ")");
+              return "active";
+            });
+          } else {
+            console.log("⚠️ [SystemAudioStatus] Capture started but permission denied - setting to error");
+            setCaptureStatus("error");
+          }
+          return prevPerm; // Don't change permission status here
+        });
+      } else if (logMessage.includes("Failed to start capture") || 
+                 (logMessage.includes("❌") && logMessage.includes("capture")) ||
+                 logMessage.includes("capture failed")) {
         console.log("❌ [SystemAudioStatus] Capture failed detected!");
         setCaptureStatus("error");
-      } else if (logMessage.includes("Starting capture") || logMessage.includes("Starting ScreenCaptureKit")) {
-        console.log("⏳ [SystemAudioStatus] Starting capture detected!");
-        setCaptureStatus("waiting");
+      } else if (logMessage.includes("Starting capture") || 
+                 logMessage.includes("Starting ScreenCaptureKit") ||
+                 logMessage.includes("Starting ScreenCaptureKit helper")) {
+        // Use functional update to check current permission status
+        setPermissionStatus((prevPerm) => {
+          if (prevPerm !== "denied") {
+            console.log("⏳ [SystemAudioStatus] Starting capture detected!");
+            setCaptureStatus("waiting");
+          }
+          return prevPerm; // Don't change permission status here
+        });
       }
 
-      // Audio detection status
+      // Audio detection status - use functional updates to check current state
       if (logMessage.includes("First audio buffer received") || logMessage.includes("✅ First audio buffer")) {
         console.log("✅ [SystemAudioStatus] First audio buffer detected!");
         setAudioDetectionStatus("active");
@@ -96,33 +161,59 @@ export const SystemAudioStatus: React.FC = () => {
         console.log("✅ [SystemAudioStatus] System capture read samples detected!");
         setAudioDetectionStatus("active");
       } else if (logMessage.includes("Still waiting for audio") || logMessage.includes("⏳ Waiting for audio") || logMessage.includes("Waiting for audio buffers")) {
-        if (permissionStatus === "granted" && captureStatus === "active") {
-          console.log("⏳ [SystemAudioStatus] Still waiting for audio detected!");
-          setAudioDetectionStatus("waiting");
-        }
-      } else if (logMessage.includes("No audio samples available") || logMessage.includes("buffer is empty")) {
-        // Only set to waiting if we have permission and capture is active
-        if (permissionStatus === "granted" && captureStatus === "active") {
-          setAudioDetectionStatus((prev) => {
-            if (prev !== "active") return "waiting";
-            return prev;
+        // Use functional updates to check current state
+        setPermissionStatus((prevPerm) => {
+          setCaptureStatus((prevCap) => {
+            if (prevPerm === "granted" && prevCap === "active") {
+              console.log("⏳ [SystemAudioStatus] Still waiting for audio detected!");
+              setAudioDetectionStatus("waiting");
+            }
+            return prevCap;
           });
-        }
+          return prevPerm;
+        });
+      } else if (logMessage.includes("No audio samples available") || logMessage.includes("buffer is empty")) {
+        // Use functional updates to check current state
+        setPermissionStatus((prevPerm) => {
+          setCaptureStatus((prevCap) => {
+            if (prevPerm === "granted" && prevCap === "active") {
+              setAudioDetectionStatus((prev) => {
+                if (prev !== "active") return "waiting";
+                return prev;
+              });
+            }
+            return prevCap;
+          });
+          return prevPerm;
+        });
       }
     });
 
     // Store cleanup function
     let cleanupFn: (() => void) | null = null;
+    let isMounted = true;
     
     // Log when listener is set up
     unlistenLog.then((fn) => {
-      cleanupFn = fn;
-      console.log("✅ [SystemAudioStatus] Log listener registered successfully");
+      if (isMounted) {
+        cleanupFn = fn;
+        console.log("✅ [SystemAudioStatus] Log listener registered successfully");
+      } else {
+        // Component unmounted before listener was ready, cleanup immediately
+        if (fn && typeof fn === 'function') {
+          try {
+            fn();
+          } catch (err) {
+            console.warn("⚠️ [SystemAudioStatus] Error cleaning up listener on unmount:", err);
+          }
+        }
+      }
     }).catch((err) => {
       console.error("❌ [SystemAudioStatus] Failed to register log listener:", err);
     });
 
     return () => {
+      isMounted = false;
       if (cleanupFn && typeof cleanupFn === 'function') {
         try {
           cleanupFn();
@@ -131,7 +222,7 @@ export const SystemAudioStatus: React.FC = () => {
         }
       }
     };
-  }, [permissionStatus, captureStatus]);
+  }, []); // Empty dependency array - listener should only be set up once
 
   // Update app ready status based on other statuses
   useEffect(() => {
@@ -153,15 +244,42 @@ export const SystemAudioStatus: React.FC = () => {
     }
   }, [permissionStatus, captureStatus, audioDetectionStatus]);
 
-  // Initial check - set app as waiting if we don't have info
+  // Periodic status check - query backend status every 2 seconds if UI is still unknown
+  // This is a fallback in case log events are missed or listener wasn't ready
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (permissionStatus === "unknown" && captureStatus === "unknown") {
-        setAppReadyStatus("waiting");
+    const interval = setInterval(async () => {
+      // Only query if we still don't have permission or capture status
+      if (permissionStatus === "unknown" || captureStatus === "unknown") {
+        try {
+          const status = await invoke<{
+            permission: string;
+            capture: string;
+            audio_detection: string;
+          }>("get_system_audio_status");
+          
+          console.log("🔄 [SystemAudioStatus] Periodic status check:", JSON.stringify(status, null, 2));
+          
+          // Update permission status if still unknown and backend says granted
+          // But only if we haven't received any log events yet
+          if (permissionStatus === "unknown" && status.permission === "granted") {
+            console.log("🔄 [SystemAudioStatus] Updating permission from periodic check");
+            setPermissionStatus("granted");
+          }
+          
+          // Update capture status if still unknown and backend says active
+          if (captureStatus === "unknown" && status.capture === "active") {
+            console.log("🔄 [SystemAudioStatus] Updating capture from periodic check");
+            setCaptureStatus("active");
+          } else if (captureStatus === "unknown" && status.capture === "waiting") {
+            setCaptureStatus("waiting");
+          }
+        } catch (err) {
+          console.error("❌ [SystemAudioStatus] Failed to query periodic status:", err);
+        }
       }
-    }, 2000);
+    }, 2000); // Check every 2 seconds
 
-    return () => clearTimeout(timeout);
+    return () => clearInterval(interval);
   }, [permissionStatus, captureStatus]);
 
   const getStatusConfig = (status: Status): { color: string; bgColor: string; icon: string } => {

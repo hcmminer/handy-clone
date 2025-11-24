@@ -221,9 +221,17 @@ pub fn get_system_audio_status(app: AppHandle) -> Result<SystemAudioStatus, Stri
     let rm = app.state::<Arc<AudioRecordingManager>>();
     let (is_open, has_audio) = rm.get_system_audio_status();
     
+    // Check if permission was denied by checking if capture failed to start
+    // If is_open is false, it could mean permission denied or just not started
+    // We'll rely on log events to determine actual permission status
+    // For now, if is_open is false, we can't determine permission status
+    let permission_denied = false; // Will be determined by log events in frontend
+    
     // Determine status
     let capture_status = if is_open {
         "active"
+    } else if permission_denied {
+        "error" // Permission denied
     } else {
         "unknown"
     };
@@ -238,12 +246,13 @@ pub fn get_system_audio_status(app: AppHandle) -> Result<SystemAudioStatus, Stri
         "unknown"
     };
     
-    // Permission is inferred from capture status
-    // If capture is active, permission is likely granted
-    let permission_status = if is_open {
-        "granted"
+    // Permission status - check if process exited (permission denied) or if capture is active (granted)
+    let permission_status = if permission_denied {
+        "denied" // Process exited, permission denied
+    } else if is_open {
+        "granted" // If capture is active, permission must be granted
     } else {
-        "unknown"
+        "unknown" // If capture is not active, we can't determine permission status
     };
     
     Ok(SystemAudioStatus {

@@ -244,8 +244,27 @@ impl AudioRecordingManager {
 
     pub fn start_microphone_stream(&self) -> Result<(), anyhow::Error> {
         let mut open_flag = self.is_open.lock().unwrap();
+        let was_already_open = *open_flag;
         if *open_flag {
             debug!("Microphone stream already active");
+            // Even if already open, ensure auto-transcription is started for SystemAudio
+            let settings = get_settings(&self.app_handle);
+            if settings.always_on_microphone {
+                let audio_source = settings.audio_source.unwrap_or(AudioSource::Microphone);
+                if audio_source == AudioSource::SystemAudio {
+                    let is_recording = *self.is_recording.lock().unwrap();
+                    if !is_recording {
+                        info!("🔄 [AudioSource] Stream already open, ensuring auto-transcription starts...");
+                        let binding_id = "transcribe".to_string();
+                        if self.try_start_recording(&binding_id) {
+                            info!("✅ [AudioSource] Auto-transcription started for already-open stream");
+                            // Note: Auto-transcription thread should be running from initial start
+                            // If it's not, we need to spawn it - but we can't easily check if it's running
+                            // So we rely on the fact that it should have been spawned when stream first opened
+                        }
+                    }
+                }
+            }
             return Ok(());
         }
 
@@ -319,6 +338,7 @@ impl AudioRecordingManager {
                             
                             info!("Auto-transcription thread started, interval: {}s (real-time mode, no audio loss)", TRANSCRIBE_INTERVAL_SECS);
                             info!("📊 [Auto-transcription] Resampler initialized: {}kHz -> {}kHz", SYSTEM_AUDIO_SAMPLE_RATE, TARGET_SAMPLE_RATE);
+                            let _ = app_handle.emit("log-update", format!("✅ [Auto-transcription] Thread started - waiting for audio samples..."));
                             
                             loop {
                                 std::thread::sleep(Duration::from_secs(TRANSCRIBE_INTERVAL_SECS));
@@ -430,6 +450,7 @@ impl AudioRecordingManager {
                                         current_buffer_size, 
                                         current_buffer_size / 16000,
                                         MIN_SAMPLES);
+                                    let _ = app_handle.emit("log-update", format!("🔄 [Auto-transcription] Buffer ready: {}s audio, starting transcription...", current_buffer_size / 16000));
                                     // Take samples for transcription (keep overlap for next iteration)
                                     let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
                                         // Take all except overlap samples
@@ -521,8 +542,12 @@ impl AudioRecordingManager {
                                                 let trimmed = transcription.trim();
                                                 info!("📝 [Auto-transcription] Raw transcription received (len={}): '{}'", transcription.len(), transcription);
                                                 
-                                                // Don't emit log-update for raw transcription - too frequent, causes UI lag
-                                                // Only emit final result
+                                                // Emit log for debugging - short and smart
+                                                if !trimmed.is_empty() {
+                                                    let _ = app_handle.emit("log-update", format!("📝 [Transcription] Result ({} chars): {}", trimmed.len(), trimmed.chars().take(50).collect::<String>()));
+                                                } else {
+                                                    let _ = app_handle.emit("log-update", format!("⚠️ [Transcription] Empty result (RMS: {:.6})", previous_rms.unwrap_or(0.0)));
+                                                }
                                                 
                                                 // Always log transcription results - this is important!
                                                 if !trimmed.is_empty() && trimmed.len() > 1 {
@@ -551,11 +576,16 @@ impl AudioRecordingManager {
                                                     // Emit live caption event to frontend
                                                     info!("📤 [LiveCaption] Emitting event with caption ({} chars): '{}'", trimmed.len(), trimmed);
                                                     
+                                                    // Emit log for debugging - short and smart
+                                                    let _ = app_handle.emit("log-update", format!("✅ [LiveCaption] Caption ({} chars): {}", trimmed.len(), trimmed.chars().take(50).collect::<String>()));
+                                                    
                                                     // Don't emit log-update for every caption - too frequent, causes UI lag
                                                     // Only emit the actual caption event
                                                     if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
                                                         error!("❌ [LiveCaption] Failed to emit live-caption-update event: {}", e);
-                                                        // Only emit error logs, not success logs
+                                                        let _ = app_handle.emit("log-update", format!("❌ [LiveCaption] Failed to emit: {}", e));
+                                                    } else {
+                                                        info!("✅ [LiveCaption] Successfully emitted live-caption-update event");
                                                     }
                                                     
                                                     // Paste the transcription
@@ -771,6 +801,34 @@ impl AudioRecordingManager {
         
         if IS_UPDATING.swap(true, std::sync::atomic::Ordering::Acquire) {
             warn!("⚠️ [AudioSource] update_selected_device already in progress, skipping duplicate call");
+            // Even if duplicate, wait a bit for the first call to complete
+            // This handles race conditions where the first call hasn't completed yet
+            // Wait longer to ensure start_microphone_stream() has time to complete
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            
+            // Check if we're in SystemAudio mode and always-on, and ensure auto-transcription is running
+            let settings = get_settings(&self.app_handle);
+            if settings.always_on_microphone {
+                let audio_source = settings.audio_source.unwrap_or(AudioSource::Microphone);
+                if audio_source == AudioSource::SystemAudio {
+                    let is_open = *self.is_open.lock().unwrap();
+                    let is_recording = *self.is_recording.lock().unwrap();
+                    if is_open {
+                        if !is_recording {
+                            // System audio is open but not recording - need to start
+                            info!("🔄 [AudioSource] Duplicate call detected, ensuring auto-transcription starts...");
+                            let binding_id = "transcribe".to_string();
+                            if self.try_start_recording(&binding_id) {
+                                info!("✅ [AudioSource] Auto-transcription started after duplicate call");
+                            }
+                        } else {
+                            info!("✅ [AudioSource] Duplicate call detected, but auto-transcription is already running");
+                        }
+                    } else {
+                        warn!("⚠️ [AudioSource] Duplicate call detected, but stream is not open yet - first call may still be in progress");
+                    }
+                }
+            }
             return Ok(());
         }
         

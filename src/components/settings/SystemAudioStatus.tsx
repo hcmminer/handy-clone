@@ -244,9 +244,15 @@ export const SystemAudioStatus: React.FC = () => {
     }
   }, [permissionStatus, captureStatus, audioDetectionStatus]);
 
-  // Periodic status check - query backend status every 2 seconds if UI is still unknown
+  // Periodic status check - query backend status every 5 seconds if UI is still unknown
   // This is a fallback in case log events are missed or listener wasn't ready
+  // Increased interval to 5s to reduce load and prevent UI lag
   useEffect(() => {
+    // Don't run periodic check if we already have status - reduces unnecessary invokes
+    if (permissionStatus !== "unknown" && captureStatus !== "unknown") {
+      return;
+    }
+    
     const interval = setInterval(async () => {
       // Only query if we still don't have permission or capture status
       if (permissionStatus === "unknown" || captureStatus === "unknown") {
@@ -277,7 +283,7 @@ export const SystemAudioStatus: React.FC = () => {
           console.error("❌ [SystemAudioStatus] Failed to query periodic status:", err);
         }
       }
-    }, 2000); // Check every 2 seconds
+    }, 5000); // Check every 5 seconds (reduced frequency to prevent UI lag)
 
     return () => clearInterval(interval);
   }, [permissionStatus, captureStatus]);

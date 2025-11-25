@@ -118,11 +118,31 @@ export const LiveCaptionViewer: React.FC = () => {
   };
 
   // Auto-scroll only if user is at bottom and auto-scroll is enabled
+  // Throttle scroll calls to prevent UI lag when logs update frequently
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   useEffect(() => {
-    if (autoScroll && isAtBottom) {
-      logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (autoScroll && isAtBottom && logEndRef.current) {
+      // Clear any pending scroll
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      
+      // Throttle scroll to max once per 100ms to prevent UI lag
+      scrollTimeoutRef.current = setTimeout(() => {
+        if (logEndRef.current && isAtBottom && autoScroll) {
+          // Use instant scroll instead of smooth to reduce lag
+          logEndRef.current.scrollIntoView({ behavior: 'auto' });
+        }
+      }, 100);
     }
-  }, [logs, autoScroll, isAtBottom]);
+    
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, [logs.length, autoScroll, isAtBottom]); // Only depend on logs.length, not logs array itself
 
   // Listen to console logs from frontend
   useEffect(() => {

@@ -14,12 +14,27 @@ export const LiveCaptionViewer: React.FC = () => {
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
   const maxLogs = 100;
 
+  // Throttle log updates to prevent UI lag when too many logs come in
+  const logUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingLogsRef = useRef<Array<{ time: string; message: string; type: 'info' | 'warn' | 'error' | 'debug' }>>([]);
+  
   const addLog = React.useCallback((type: 'info' | 'warn' | 'error' | 'debug', message: string) => {
     const time = new Date().toLocaleTimeString();
-    setLogs((prev) => {
-      const newLogs = [...prev, { time, message, type }];
-      return newLogs.slice(-maxLogs);
-    });
+    pendingLogsRef.current.push({ time, message, type });
+    
+    // Throttle: only update logs max once per 200ms to prevent UI lag
+    if (logUpdateTimeoutRef.current) {
+      return; // Already scheduled
+    }
+    
+    logUpdateTimeoutRef.current = setTimeout(() => {
+      setLogs((prev) => {
+        const newLogs = [...prev, ...pendingLogsRef.current];
+        pendingLogsRef.current = [];
+        return newLogs.slice(-maxLogs);
+      });
+      logUpdateTimeoutRef.current = null;
+    }, 200);
   }, []);
 
   useEffect(() => {
@@ -46,7 +61,17 @@ export const LiveCaptionViewer: React.FC = () => {
       console.error("❌ [LiveCaptionViewer] Failed to register caption listener:", err);
     });
 
+    // Throttle log listener to prevent UI lag when too many logs come in
+    let lastLogTime = 0;
+    const LOG_THROTTLE_MS = 100; // Only process logs max once per 100ms
+    
     const unlistenLog = listen<string>("log-update", (event) => {
+      const now = Date.now();
+      if (now - lastLogTime < LOG_THROTTLE_MS) {
+        return; // Skip if too frequent
+      }
+      lastLogTime = now;
+      
       const logMessage = event.payload.trim();
       if (logMessage) {
         // Determine log type from message
@@ -60,7 +85,7 @@ export const LiveCaptionViewer: React.FC = () => {
         }
         addLog(logType, logMessage);
 
-        // Show popup for permission status
+        // Show popup for permission status (only for important messages)
         if (logMessage.includes('PERMISSION DENIED') || logMessage.includes('❌ PERMISSION DENIED')) {
           toast.error("❌ Screen Recording Permission bị từ chối!", {
             description: "Vui lòng cấp quyền Screen Recording trong System Settings > Privacy & Security > Screen Recording",
@@ -101,6 +126,12 @@ export const LiveCaptionViewer: React.FC = () => {
           console.warn("⚠️ [LiveCaptionViewer] Error cleaning up log listener:", err);
         }
       }
+      // Clear pending log updates
+      if (logUpdateTimeoutRef.current) {
+        clearTimeout(logUpdateTimeoutRef.current);
+        logUpdateTimeoutRef.current = null;
+      }
+      pendingLogsRef.current = [];
     };
   }, [settings?.live_caption_enabled, addLog]);
 

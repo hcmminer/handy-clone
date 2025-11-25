@@ -192,11 +192,15 @@ impl MacOSSystemAudio {
             
             match stream_result {
                 Ok(stream) => {
+                    log::info!("✅✅✅ [BlackHole] Stream created successfully! Waiting for callbacks...");
+                    let _ = app_handle.emit("log-update", "✅ [BlackHole] Stream created - waiting for audio callbacks...");
                     if let Err(e) = stream.play() {
-                        log::error!("Failed to start BlackHole stream: {}", e);
+                        log::error!("❌ [BlackHole] Failed to play stream: {}", e);
+                        let _ = app_handle.emit("log-update", format!("❌ [BlackHole] Failed to play stream: {}", e));
                         return;
                     }
-                    log::info!("✅ BlackHole stream started in worker thread");
+                    log::info!("✅✅✅ [BlackHole] Stream started (playing) - callbacks should start now!");
+                    let _ = app_handle.emit("log-update", "✅ [BlackHole] Stream playing - callbacks should start!");
                     
                     // Keep stream alive - wait for stop signal
                     let _stream = stream; // Stream stays alive as long as this variable exists
@@ -290,8 +294,16 @@ impl MacOSSystemAudio {
         f32: cpal::FromSample<T>,
     {
         let mut callback_count = 0u64;
+        log::info!("🔧 [BlackHole] Creating stream callback function...");
         let stream_cb = move |data: &[T], _info: &cpal::InputCallbackInfo| {
             callback_count += 1;
+            
+            // CRITICAL: Always log first callback to confirm it's being called
+            if callback_count == 1 {
+                log::info!("🎉 [BlackHole] ✅✅✅ FIRST CALLBACK RECEIVED! Callback #1: {} samples", data.len());
+                let _ = app_handle.emit("log-update", format!("🎉 [BlackHole] First callback received: {} samples", data.len()));
+            }
+            
             let mut buf = buffer.lock().unwrap();
             
             // CRITICAL: Log EVERY callback for first 50 to catch any issues

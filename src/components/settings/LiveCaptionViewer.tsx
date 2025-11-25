@@ -9,6 +9,9 @@ export const LiveCaptionViewer: React.FC = () => {
   const [caption, setCaption] = useState<string>("");
   const [logs, setLogs] = useState<Array<{ time: string; message: string; type: 'info' | 'warn' | 'error' | 'debug' }>>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const logContainerRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
   const maxLogs = 100;
 
   const addLog = React.useCallback((type: 'info' | 'warn' | 'error' | 'debug', message: string) => {
@@ -101,9 +104,25 @@ export const LiveCaptionViewer: React.FC = () => {
     };
   }, [settings?.live_caption_enabled, addLog]);
 
+  // Check if user is at bottom of log container
+  const checkIfAtBottom = () => {
+    if (!logContainerRef.current) return false;
+    const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
+    // Consider "at bottom" if within 50px of bottom
+    return scrollHeight - scrollTop - clientHeight < 50;
+  };
+
+  // Handle scroll event to track if user is at bottom
+  const handleScroll = () => {
+    setIsAtBottom(checkIfAtBottom());
+  };
+
+  // Auto-scroll only if user is at bottom and auto-scroll is enabled
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+    if (autoScroll && isAtBottom) {
+      logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, autoScroll, isAtBottom]);
 
   // Listen to console logs from frontend
   useEffect(() => {
@@ -185,6 +204,27 @@ export const LiveCaptionViewer: React.FC = () => {
             </div>
             <div className="flex gap-2">
               <button
+                onClick={() => setAutoScroll(!autoScroll)}
+                className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                  autoScroll 
+                    ? 'bg-green-500/20 hover:bg-green-500/30 text-green-400' 
+                    : 'bg-mid-gray/20 hover:bg-mid-gray/30'
+                }`}
+                title={autoScroll ? "Auto-scroll đang bật - Click để tắt" : "Auto-scroll đang tắt - Click để bật"}
+              >
+                {autoScroll ? "⏸️ Pause" : "▶️ Resume"}
+              </button>
+              <button
+                onClick={() => {
+                  logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                  setIsAtBottom(true);
+                }}
+                className="px-3 py-1 text-sm bg-mid-gray/20 hover:bg-mid-gray/30 rounded-lg transition-colors"
+                title="Scroll xuống cuối"
+              >
+                ⬇️ Scroll to Bottom
+              </button>
+              <button
                 onClick={copyLogs}
                 className="px-3 py-1 text-sm bg-mid-gray/20 hover:bg-mid-gray/30 rounded-lg transition-colors"
                 disabled={logs.length === 0}
@@ -200,7 +240,11 @@ export const LiveCaptionViewer: React.FC = () => {
               </button>
             </div>
           </div>
-          <div className="bg-background-dark rounded-lg p-4 border border-mid-gray/20 max-h-96 overflow-y-auto font-mono text-xs">
+          <div 
+            ref={logContainerRef}
+            onScroll={handleScroll}
+            className="bg-background-dark rounded-lg p-4 border border-mid-gray/20 max-h-96 overflow-y-auto font-mono text-xs"
+          >
             {logs.length === 0 ? (
               <div className="text-text/50 italic">No logs yet...</div>
             ) : (

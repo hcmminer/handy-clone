@@ -161,6 +161,10 @@ impl MacOSSystemAudio {
         
         log::info!("📊 Device config ({}): sample_rate={}, channels={}, format={:?}", 
             device_name, sample_rate, channels, config.sample_format());
+        let _ = self.app_handle.emit("log-update", format!(
+            "📊 [BlackHole] Device: {}, Rate: {}Hz, Channels: {}, Format: {:?}", 
+            device_name, sample_rate, channels, config.sample_format()
+        ));
         
         let buffer = self.sample_buffer.clone();
         
@@ -288,8 +292,10 @@ impl MacOSSystemAudio {
             callback_count += 1;
             let mut buf = buffer.lock().unwrap();
             
-            // Calculate RMS for first few callbacks to check if audio is present
-            if callback_count <= 10 {
+            // Always log first 20 callbacks for debugging, then every 100 callbacks
+            let should_log = callback_count <= 20 || callback_count % 100 == 0;
+            
+            if should_log {
                 let rms = if data.is_empty() {
                     0.0
                 } else {
@@ -307,13 +313,29 @@ impl MacOSSystemAudio {
                 
                 // Debug: Check first few raw samples to see what we're getting
                 let first_samples: Vec<f32> = data.iter().take(10).map(|&s| s.to_sample::<f32>()).collect();
-                log::info!("🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.6}, Max: {:.6}, First 10: {:?}", 
-                    callback_count, data.len(), rms, max_amp, first_samples);
+                let min_sample = first_samples.iter().fold(0.0f32, |a, &b| a.min(b.abs()));
+                let max_sample = first_samples.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
                 
-                // If all samples are zero, log a warning
-                if max_amp < 0.00001 && callback_count == 5 {
-                    log::warn!("⚠️ [BlackHole] All samples are ZERO! This means BlackHole is not receiving audio.");
-                    log::warn!("⚠️ [BlackHole] Check: 1) Is Multi-Output Device set as Sound Output? 2) Is audio actually playing?");
+                log::info!("🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.9}, Max: {:.9}, Range: [{:.9}, {:.9}], First 10: {:?}", 
+                    callback_count, data.len(), rms, max_amp, min_sample, max_sample, first_samples);
+                
+                // If all samples are zero, log warnings at key points
+                if max_amp < 0.00001 {
+                    if callback_count == 5 {
+                        log::warn!("⚠️ [BlackHole] ⚠️⚠️⚠️ All samples are ZERO at callback #5!");
+                        log::warn!("⚠️ [BlackHole] This means BlackHole is NOT receiving audio from system.");
+                        log::warn!("⚠️ [BlackHole] Check: 1) System Settings > Sound > Output = Multi-Output Device?");
+                        log::warn!("⚠️ [BlackHole] Check: 2) Is audio actually playing from Chrome/app?");
+                        log::warn!("⚠️ [BlackHole] Check: 3) Multi-Output Device includes BlackHole 2ch?");
+                    } else if callback_count == 20 {
+                        log::error!("❌ [BlackHole] ❌❌❌ Still ZERO after 20 callbacks! BlackHole definitely not receiving audio!");
+                        log::error!("❌ [BlackHole] ACTION REQUIRED: Configure Sound Output to Multi-Output Device with BlackHole");
+                    }
+                } else {
+                    // Audio detected!
+                    if callback_count <= 5 {
+                        log::info!("✅✅✅ [BlackHole] AUDIO DETECTED! RMS: {:.9}, Max: {:.9}", rms, max_amp);
+                    }
                 }
             }
             

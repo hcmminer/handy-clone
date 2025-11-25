@@ -368,14 +368,17 @@ Time:  0s    3s    6s    9s    12s
 
 ## 🎯 Tóm Tắt Luồng Hoạt Động
 
+**⚠️ QUAN TRỌNG:** Hiện tại app **CHỈ dùng BlackHole** để capture system audio. ScreenCaptureKit chỉ là fallback và **KHÔNG được sử dụng** trong trường hợp bình thường.
+
 ```
 1. User cấu hình Multi-Output Device (BlackHole + Speakers)
    ↓
 2. App start → Detect BlackHole device
    ↓
-3. Start capture từ BlackHole (48kHz)
+3. ✅ BlackHole được tìm thấy → Start capture từ BlackHole (48kHz)
+   ❌ BlackHole KHÔNG được tìm thấy → Fallback ScreenCaptureKit (chỉ khi BlackHole không có)
    ↓
-4. Audio callback → Push vào sample_buffer
+4. Audio callback từ BlackHole → Push vào sample_buffer
    ↓
 5. Auto-transcription thread (mỗi 3s):
    - Read từ sample_buffer
@@ -388,14 +391,24 @@ Time:  0s    3s    6s    9s    12s
 7. Paste transcription vào active app
 ```
 
+**Lưu ý về Fallback:**
+- ScreenCaptureKit **CHỈ** được dùng khi:
+  - BlackHole device không được tìm thấy (user chưa cài BlackHole)
+  - BlackHole start failed với error
+- ScreenCaptureKit **KHÔNG** được dùng khi:
+  - BlackHole được tìm thấy nhưng không có audio (user chưa cấu hình Multi-Output Device)
+  - Trong trường hợp này, app giữ BlackHole running và monitor cho audio
+
 ---
 
 ## 🔧 Các Thành Phần Chính
 
 ### **MacOSSystemAudio**
-- Quản lý BlackHole capture
+- Quản lý BlackHole capture (primary method)
+- Fallback ScreenCaptureKit (chỉ khi BlackHole không có sẵn)
 - Thread-safe sample buffer
 - Device detection và monitoring
+- **Hiện tại:** Chỉ dùng BlackHole trong production (ScreenCaptureKit là fallback không được test)
 
 ### **FrameResampler**
 - Resample 48kHz → 16kHz

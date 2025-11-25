@@ -19,6 +19,7 @@ pub trait SystemAudioCapture: Send + Sync {
     fn is_capturing(&self) -> bool;
 }
 
+// macOS implementation
 #[cfg(target_os = "macos")]
 pub use system_audio_macos::MacOSSystemAudio;
 
@@ -26,10 +27,19 @@ pub use system_audio_macos::MacOSSystemAudio;
 #[path = "system_audio_macos.rs"]
 mod system_audio_macos;
 
-#[cfg(not(target_os = "macos"))]
+// Windows implementation
+#[cfg(target_os = "windows")]
+pub use system_audio_windows::WindowsSystemAudio;
+
+#[cfg(target_os = "windows")]
+#[path = "system_audio_windows.rs"]
+mod system_audio_windows;
+
+// Linux and other platforms - not yet implemented
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub struct DummySystemAudio;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl SystemAudioCapture for DummySystemAudio {
     fn start_capture(&mut self) -> Result<()> {
         Err(anyhow::anyhow!("System audio capture not supported on this platform"))

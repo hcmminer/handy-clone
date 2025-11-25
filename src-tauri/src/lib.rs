@@ -120,6 +120,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    
+    // Initialize system audio capture if configured
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let settings = crate::settings::get_settings(app_handle);
+        if let Some(crate::settings::AudioSource::SystemAudio) = settings.audio_source {
+            log::info!("🎯 [Initialization] System audio selected, initializing capture...");
+            if let Err(e) = recording_manager.start_microphone_stream() {
+                log::error!("❌ [Initialization] Failed to initialize system audio: {}", e);
+            } else {
+                log::info!("✅ [Initialization] System audio capture initialized successfully");
+            }
+        }
+    }
 
     // Initialize the shortcuts
     shortcut::init_shortcuts(app_handle);

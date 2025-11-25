@@ -62,7 +62,7 @@ export const AudioSourceSelector: React.FC<AudioSourceSelectorProps> = React.mem
     return (
       <SettingContainer
         title="Audio Source"
-        description="Select audio input source: Microphone or System Audio (macOS only)"
+        description="Select audio input source: Microphone or System Audio (macOS/Windows)"
         descriptionMode={descriptionMode}
         grouped={grouped}
       >

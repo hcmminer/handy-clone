@@ -1,8 +1,14 @@
 use crate::audio_toolkit::{
     audio::FrameResampler,
-    list_input_devices, vad::SmoothedVad, AudioRecorder, MacOSSystemAudio, SileroVad,
+    list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad,
     SystemAudioCapture,
 };
+
+#[cfg(target_os = "macos")]
+use crate::audio_toolkit::MacOSSystemAudio;
+
+#[cfg(target_os = "windows")]
+use crate::audio_toolkit::WindowsSystemAudio;
 use crate::helpers::clamshell;
 use crate::settings::{get_settings, AppSettings, AudioSource};
 use crate::utils;
@@ -150,7 +156,7 @@ pub struct AudioRecordingManager {
     app_handle: tauri::AppHandle,
 
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     system_capture: Arc<Mutex<Option<Box<dyn SystemAudioCapture>>>>,
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
@@ -174,7 +180,7 @@ impl AudioRecordingManager {
             app_handle: app.clone(),
 
             recorder: Arc::new(Mutex::new(None)),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             system_capture: Arc::new(Mutex::new(None)),
             is_open: Arc::new(Mutex::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
@@ -276,10 +282,10 @@ impl AudioRecordingManager {
         *did_mute_guard = false;
 
         if audio_source == AudioSource::SystemAudio {
-            // System Audio Capture
+            // System Audio Capture - macOS
             #[cfg(target_os = "macos")]
             {
-                info!("Initializing system audio capture");
+                info!("Initializing system audio capture (macOS)");
                 let mut capture = MacOSSystemAudio::new(&self.app_handle)?;
                 match capture.start_capture() {
                     Ok(()) => {
@@ -366,7 +372,7 @@ impl AudioRecordingManager {
                                 
                                 // Read new samples from system capture buffer and add to accumulation buffer
                                 let new_samples = {
-                                    #[cfg(target_os = "macos")]
+                                    #[cfg(any(target_os = "macos", target_os = "windows"))]
                                     {
                                         if let Some(capture) = rm.system_capture.lock().unwrap().as_mut() {
                                                 match capture.read_samples() {
@@ -404,7 +410,7 @@ impl AudioRecordingManager {
                                             None
                                         }
                                     }
-                                    #[cfg(not(target_os = "macos"))]
+                                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                                     {
                                         None
                                     }
@@ -616,7 +622,269 @@ impl AudioRecordingManager {
                 
                 return Ok(());
             }
-            #[cfg(not(target_os = "macos"))]
+            
+            // System Audio Capture - Windows
+            #[cfg(target_os = "windows")]
+            {
+                info!("Initializing system audio capture (Windows WASAPI)");
+                let mut capture = WindowsSystemAudio::new(&self.app_handle)?;
+                match capture.start_capture() {
+                    Ok(()) => {
+                        *self.system_capture.lock().unwrap() = Some(Box::new(capture));
+                        *open_flag = true;
+                        info!(
+                            "System audio capture initialized in {:?}",
+                            start_time.elapsed()
+                        );
+                    },
+                    Err(e) => {
+                        error!("Failed to start system audio capture: {}", e);
+                        *open_flag = false;
+                        return Err(e);
+                    }
+                }
+                
+                // Auto-start recording in always-on mode with system audio
+                let settings = get_settings(&self.app_handle);
+                if settings.always_on_microphone {
+                    info!("Always-on mode: Auto-starting continuous system audio transcription");
+                    let binding_id = "transcribe".to_string();
+                    if self.try_start_recording(&binding_id) {
+                        info!("Auto-started recording in always-on mode");
+                        
+                        // Start continuous transcription loop with sliding window (no audio loss like Google Translate)
+                        // This is the same implementation as macOS
+                        let app_handle = self.app_handle.clone();
+                        let rm = Arc::new(self.clone());
+                        std::thread::spawn(move || {
+                            use std::time::Duration;
+                            use std::collections::VecDeque;
+                            use crate::audio_toolkit::audio::FrameResampler;
+                            
+                            const TRANSCRIBE_INTERVAL_SECS: u64 = 3;
+                            const MIN_AUDIO_SECS: usize = 2;
+                            const OVERLAP_SECS: usize = 1;
+                            const MIN_SAMPLES: usize = MIN_AUDIO_SECS * 16000;
+                            const OVERLAP_SAMPLES: usize = OVERLAP_SECS * 16000;
+                            const SYSTEM_AUDIO_SAMPLE_RATE: usize = 48000;
+                            const TARGET_SAMPLE_RATE: usize = 16000;
+                            
+                            let mut resampler = FrameResampler::new(
+                                SYSTEM_AUDIO_SAMPLE_RATE,
+                                TARGET_SAMPLE_RATE,
+                                Duration::from_millis(30),
+                            );
+                            
+                            let mut accumulated_buffer: VecDeque<f32> = VecDeque::new();
+                            let mut previous_rms: Option<f32> = None;
+                            let mut silence_detected_count = 0u64;
+                            
+                            info!("Windows auto-transcription thread started, interval: {}s", TRANSCRIBE_INTERVAL_SECS);
+                            info!("📊 [Auto-transcription] Resampler initialized: {}kHz -> {}kHz", SYSTEM_AUDIO_SAMPLE_RATE, TARGET_SAMPLE_RATE);
+                            let _ = app_handle.emit("log-update", format!("✅ [Auto-transcription] Thread started - waiting for audio samples..."));
+                            
+                            loop {
+                                std::thread::sleep(Duration::from_secs(TRANSCRIBE_INTERVAL_SECS));
+                                
+                                let settings = crate::settings::get_settings(&app_handle);
+                                if !settings.always_on_microphone {
+                                    info!("Always-on mode disabled, stopping auto-transcription");
+                                    break;
+                                }
+                                
+                                let audio_source = settings.audio_source.unwrap_or(crate::settings::AudioSource::Microphone);
+                                if audio_source != crate::settings::AudioSource::SystemAudio {
+                                    info!("Audio source changed from SystemAudio, stopping auto-transcription");
+                                    break;
+                                }
+                                
+                                if !*rm.is_recording.lock().unwrap() {
+                                    if !rm.try_start_recording(&binding_id) {
+                                        warn!("Failed to restart recording in always-on mode");
+                                        break;
+                                    }
+                                }
+                                
+                                let new_samples = {
+                                    if let Some(capture) = rm.system_capture.lock().unwrap().as_mut() {
+                                        match capture.read_samples() {
+                                            Ok(Some(s)) => {
+                                                if !s.is_empty() {
+                                                    info!("🎙️ [Auto-transcription] ✅ Read {} new samples from system capture ({}s audio)", s.len(), s.len() / 16000);
+                                                    Some(s)
+                                                } else {
+                                                    debug!("Auto-transcription: System capture returned empty samples");
+                                                    None
+                                                }
+                                            },
+                                            Ok(None) => {
+                                                static EMPTY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                                let count = EMPTY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                                if count % 10 == 0 {
+                                                    info!("🔍 [Auto-transcription] System capture buffer is empty (checked {} times)", count + 1);
+                                                    let _ = app_handle.emit("log-update", format!("🔍 [Auto-transcription] Buffer empty (checked {} times) - Please ensure audio is playing", count + 1));
+                                                }
+                                                None
+                                            },
+                                            Err(e) => {
+                                                error!("❌ [Auto-transcription] Failed to read samples: {}", e);
+                                                let _ = app_handle.emit("log-update", format!("❌ [Auto-transcription] Failed to read samples: {}", e));
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        warn!("⚠️ [Auto-transcription] System capture not available");
+                                        None
+                                    }
+                                };
+                                
+                                if let Some(new_samples) = new_samples {
+                                    let input_count = new_samples.len();
+                                    let mut resampled_samples = Vec::new();
+                                    resampler.push(&new_samples, |chunk| {
+                                        resampled_samples.extend_from_slice(chunk);
+                                    });
+                                    
+                                    let resampled_count = resampled_samples.len();
+                                    accumulated_buffer.extend(resampled_samples);
+                                    let total_count = accumulated_buffer.len();
+                                    
+                                    info!("📥 [Auto-transcription] Resampled {} samples (48kHz) -> {} samples (16kHz), total buffer: {} samples ({}s)", 
+                                        input_count, resampled_count, total_count, total_count / 16000);
+                                } else {
+                                    static NO_SAMPLES_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                    let count = NO_SAMPLES_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if count % 20 == 0 {
+                                        warn!("Auto-transcription: No audio samples available (checked {} times)", count + 1);
+                                        let _ = app_handle.emit("log-update", format!("⚠️ [Auto-transcription] No audio samples available (checked {} times)", count + 1));
+                                    }
+                                }
+                                
+                                let current_buffer_size = accumulated_buffer.len();
+                                if current_buffer_size >= MIN_SAMPLES {
+                                    info!("✅ [Auto-transcription] Buffer has {} samples ({}s), ready to transcribe!", 
+                                        current_buffer_size, current_buffer_size / 16000);
+                                    let _ = app_handle.emit("log-update", format!("🔄 [Auto-transcription] Buffer ready: {}s audio", current_buffer_size / 16000));
+                                    
+                                    let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
+                                        let take_count = accumulated_buffer.len() - OVERLAP_SAMPLES;
+                                        accumulated_buffer.drain(..take_count).collect()
+                                    } else {
+                                        accumulated_buffer.drain(..).collect()
+                                    };
+                                    
+                                    if !samples_to_transcribe.is_empty() {
+                                        let rms = (samples_to_transcribe.iter()
+                                            .map(|&s| s * s)
+                                            .sum::<f32>() / samples_to_transcribe.len() as f32)
+                                            .sqrt();
+                                        let max_amplitude = samples_to_transcribe.iter()
+                                            .map(|&s| s.abs())
+                                            .fold(0.0f32, |a, b| a.max(b));
+                                        
+                                        info!("🎙️ [Auto-transcription] Processing {} samples ({}s audio) - RMS: {:.6}, Max: {:.6}",
+                                            samples_to_transcribe.len(), samples_to_transcribe.len() / 16000, rms, max_amplitude);
+                                        
+                                        let was_silent = previous_rms.map(|pr| pr < 0.00001).unwrap_or(true);
+                                        let is_now_audio = rms > 0.00001;
+                                        
+                                        if was_silent && is_now_audio {
+                                            info!("🎉 [Auto-transcription] ✅ AUDIO DETECTED! RMS: {:.6}, Max: {:.6}", rms, max_amplitude);
+                                            let _ = app_handle.emit("log-update", format!("🎉 [Auto-transcription] ✅ AUDIO DETECTED! RMS: {:.6}", rms));
+                                        }
+                                        
+                                        if rms < 0.00001 && max_amplitude < 0.01 {
+                                            silence_detected_count += 1;
+                                            if silence_detected_count == 1 {
+                                                warn!("⚠️ [Auto-transcription] Audio is SILENT (RMS: {:.6})", rms);
+                                                let _ = app_handle.emit("log-update", "⚠️ [Config] Audio is SILENT! Please play audio from Chrome/Spotify");
+                                            }
+                                        } else {
+                                            if silence_detected_count > 0 {
+                                                info!("🎉 [Auto-transcription] ✅ AUDIO DETECTED after {} silent checks!", silence_detected_count);
+                                                let _ = app_handle.emit("log-update", format!("🎉 [Auto-transcription] ✅ AUDIO DETECTED! RMS: {:.6}", rms));
+                                                silence_detected_count = 0;
+                                            }
+                                        }
+                                        
+                                        previous_rms = Some(rms);
+                                        
+                                        let tm = app_handle.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+                                        let hm = app_handle.state::<Arc<crate::managers::history::HistoryManager>>();
+                                        let samples_clone = samples_to_transcribe.clone();
+                                        
+                                        tm.initiate_model_load();
+                                        
+                                        let mut wait_count = 0;
+                                        const MAX_WAIT: u32 = 20;
+                                        while !tm.is_model_loaded() && wait_count < MAX_WAIT {
+                                            std::thread::sleep(Duration::from_millis(500));
+                                            wait_count += 1;
+                                        }
+                                        
+                                        if !tm.is_model_loaded() {
+                                            warn!("Model still not loaded after waiting, skipping transcription");
+                                            let _ = app_handle.emit("log-update", "⚠️ [Auto-transcription] Model not loaded, skipping");
+                                            continue;
+                                        }
+                                        
+                                        info!("🔄 [Auto-transcription] Starting transcription for {} samples", samples_to_transcribe.len());
+                                        
+                                        match tm.transcribe(samples_to_transcribe) {
+                                            Ok(transcription) => {
+                                                let trimmed = transcription.trim();
+                                                info!("📝 [Auto-transcription] Raw transcription (len={}): '{}'", transcription.len(), transcription);
+                                                
+                                                if !trimmed.is_empty() {
+                                                    let _ = app_handle.emit("log-update", format!("📝 [Transcription] Result: {}", trimmed.chars().take(50).collect::<String>()));
+                                                }
+                                                
+                                                if !trimmed.is_empty() && trimmed.len() > 1 {
+                                                    info!("🎯 [Auto-transcription] Result: '{}'", trimmed);
+                                                    
+                                                    let hm_clone = Arc::clone(&hm);
+                                                    let transcription_clone = trimmed.to_string();
+                                                    let samples_clone2 = samples_clone.clone();
+                                                    tauri::async_runtime::spawn(async move {
+                                                        if let Err(e) = hm_clone.save_transcription(
+                                                            samples_clone2,
+                                                            transcription_clone.clone(),
+                                                            None,
+                                                            None,
+                                                        ).await {
+                                                            error!("Failed to save auto-transcription to history: {}", e);
+                                                        }
+                                                    });
+                                                    
+                                                    info!("📤 [LiveCaption] Emitting event with caption: '{}'", trimmed);
+                                                    let _ = app_handle.emit("log-update", format!("✅ [LiveCaption] Caption: {}", trimmed.chars().take(50).collect::<String>()));
+                                                    
+                                                    if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
+                                                        error!("❌ [LiveCaption] Failed to emit: {}", e);
+                                                    } else {
+                                                        info!("✅ [LiveCaption] Successfully emitted live-caption-update event");
+                                                    }
+                                                    
+                                                    if let Err(e) = crate::utils::paste(trimmed.to_string(), app_handle.clone()) {
+                                                        error!("Failed to paste auto-transcription: {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Auto-transcription failed: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+                
+                return Ok(());
+            }
+            
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
                 return Err(anyhow::anyhow!("System audio capture not supported on this platform"));
             }
@@ -744,7 +1012,7 @@ impl AudioRecordingManager {
             if audio_source == AudioSource::SystemAudio {
                 // System capture is continuous, so we just mark state.
                 // Clear any old buffer data before starting "recording" segment.
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
                 {
                     if let Some(capture) = self.system_capture.lock().unwrap().as_mut() {
                         let _ = capture.read_samples(); // Clear buffer
@@ -778,7 +1046,7 @@ impl AudioRecordingManager {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn get_system_audio_status(&self) -> (bool, bool) {
         // Returns (is_open, has_audio_samples)
         let is_open = *self.is_open.lock().unwrap();
@@ -798,7 +1066,7 @@ impl AudioRecordingManager {
         (is_open, has_audio)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn get_system_audio_status(&self) -> (bool, bool) {
         (false, false)
     }

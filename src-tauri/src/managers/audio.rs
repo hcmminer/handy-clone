@@ -926,6 +926,203 @@ impl AudioRecordingManager {
             "Microphone stream initialized in {:?}",
             start_time.elapsed()
         );
+        
+        // Auto-start recording in always-on mode with microphone
+        let settings = get_settings(&self.app_handle);
+        if settings.always_on_microphone {
+            info!("Always-on mode: Auto-starting continuous microphone transcription");
+            let binding_id = "transcribe".to_string();
+            if self.try_start_recording(&binding_id) {
+                info!("Auto-started microphone recording in always-on mode");
+                
+                // Start continuous transcription loop for microphone (similar to system audio)
+                let app_handle = self.app_handle.clone();
+                let rm = Arc::new(self.clone());
+                std::thread::spawn(move || {
+                    use std::time::Duration;
+                    use std::collections::VecDeque;
+                    
+                    const TRANSCRIBE_INTERVAL_SECS: u64 = 3;
+                    const MIN_AUDIO_SECS: usize = 2;
+                    const OVERLAP_SECS: usize = 1;
+                    const MIN_SAMPLES: usize = MIN_AUDIO_SECS * 16000;
+                    const OVERLAP_SAMPLES: usize = OVERLAP_SECS * 16000;
+                    const MIC_SAMPLE_RATE: usize = 16000; // Mic already at 16kHz
+                    
+                    let mut accumulated_buffer: VecDeque<f32> = VecDeque::new();
+                    let mut previous_rms: Option<f32> = None;
+                    let mut silence_detected_count = 0u64;
+                    
+                    info!("🎤 [Mic Auto-transcription] Thread started, interval: {}s", TRANSCRIBE_INTERVAL_SECS);
+                    let _ = app_handle.emit("log-update", "✅ [Mic Auto-transcription] Thread started - waiting for audio...".to_string());
+                    
+                    loop {
+                        std::thread::sleep(Duration::from_secs(TRANSCRIBE_INTERVAL_SECS));
+                        
+                        let settings = crate::settings::get_settings(&app_handle);
+                        if !settings.always_on_microphone {
+                            info!("Always-on mode disabled, stopping mic auto-transcription");
+                            break;
+                        }
+                        
+                        let audio_source = settings.audio_source.unwrap_or(crate::settings::AudioSource::Microphone);
+                        if audio_source != crate::settings::AudioSource::Microphone {
+                            info!("Audio source changed from Microphone, stopping auto-transcription");
+                            break;
+                        }
+                        
+                        if !*rm.is_recording.lock().unwrap() {
+                            if !rm.try_start_recording(&binding_id) {
+                                warn!("Failed to restart microphone recording in always-on mode");
+                                break;
+                            }
+                        }
+                        
+                        // Read samples from microphone recorder
+                        let new_samples = {
+                            if let Some(rec) = rm.recorder.lock().unwrap().as_mut() {
+                                // Use read_samples() to get continuous buffer without stopping
+                                // This ensures no audio loss (like system audio)
+                                match rec.read_samples() {
+                                    Ok(samples) => {
+                                        if !samples.is_empty() {
+                                            info!("🎤 [Mic Auto-transcription] ✅ Read {} samples ({}s audio)", samples.len(), samples.len() / 16000);
+                                            Some(samples)
+                                        } else {
+                                            debug!("Mic recorder returned empty samples");
+                                            None
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!("❌ [Mic Auto-transcription] Failed to read samples: {}", e);
+                                        None
+                                    }
+                                }
+                            } else {
+                                warn!("⚠️ [Mic Auto-transcription] Recorder not available");
+                                None
+                            }
+                        };
+                        
+                        // Microphone samples are already at 16kHz, no resampling needed
+                        if let Some(new_samples) = new_samples {
+                            accumulated_buffer.extend(new_samples);
+                            let total_count = accumulated_buffer.len();
+                            info!("📥 [Mic Auto-transcription] Accumulated {} samples ({}s)", total_count, total_count / 16000);
+                        }
+                        
+                        let current_buffer_size = accumulated_buffer.len();
+                        if current_buffer_size >= MIN_SAMPLES {
+                            info!("✅ [Mic Auto-transcription] Buffer has {} samples ({}s), ready to transcribe!", 
+                                current_buffer_size, current_buffer_size / 16000);
+                            
+                            let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
+                                let take_count = accumulated_buffer.len() - OVERLAP_SAMPLES;
+                                accumulated_buffer.drain(..take_count).collect()
+                            } else {
+                                accumulated_buffer.drain(..).collect()
+                            };
+                            
+                            if !samples_to_transcribe.is_empty() {
+                                let rms = (samples_to_transcribe.iter()
+                                    .map(|&s| s * s)
+                                    .sum::<f32>() / samples_to_transcribe.len() as f32)
+                                    .sqrt();
+                                let max_amplitude = samples_to_transcribe.iter()
+                                    .map(|&s| s.abs())
+                                    .fold(0.0f32, |a, b| a.max(b));
+                                
+                                info!("🎤 [Mic Auto-transcription] Processing {} samples ({}s) - RMS: {:.6}, Max: {:.6}",
+                                    samples_to_transcribe.len(), samples_to_transcribe.len() / 16000, rms, max_amplitude);
+                                
+                                let was_silent = previous_rms.map(|pr| pr < 0.00001).unwrap_or(true);
+                                let is_now_audio = rms > 0.00001;
+                                
+                                if was_silent && is_now_audio {
+                                    info!("🎉 [Mic Auto-transcription] ✅ AUDIO DETECTED! RMS: {:.6}", rms);
+                                    let _ = app_handle.emit("log-update", format!("🎉 [Mic] AUDIO DETECTED! RMS: {:.6}", rms));
+                                }
+                                
+                                if rms < 0.00001 && max_amplitude < 0.01 {
+                                    silence_detected_count += 1;
+                                    if silence_detected_count == 1 {
+                                        warn!("⚠️ [Mic Auto-transcription] Audio is SILENT (RMS: {:.6})", rms);
+                                    }
+                                } else {
+                                    if silence_detected_count > 0 {
+                                        info!("🎉 [Mic Auto-transcription] ✅ AUDIO DETECTED after {} silent checks!", silence_detected_count);
+                                        silence_detected_count = 0;
+                                    }
+                                }
+                                
+                                previous_rms = Some(rms);
+                                
+                                let tm = app_handle.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
+                                let hm = app_handle.state::<Arc<crate::managers::history::HistoryManager>>();
+                                let samples_clone = samples_to_transcribe.clone();
+                                
+                                tm.initiate_model_load();
+                                
+                                let mut wait_count = 0;
+                                const MAX_WAIT: u32 = 20;
+                                while !tm.is_model_loaded() && wait_count < MAX_WAIT {
+                                    std::thread::sleep(Duration::from_millis(500));
+                                    wait_count += 1;
+                                }
+                                
+                                if !tm.is_model_loaded() {
+                                    warn!("Model still not loaded after waiting, skipping transcription");
+                                    continue;
+                                }
+                                
+                                info!("🔄 [Mic Auto-transcription] Starting transcription for {} samples", samples_to_transcribe.len());
+                                
+                                match tm.transcribe(samples_to_transcribe) {
+                                    Ok(transcription) => {
+                                        let trimmed = transcription.trim();
+                                        info!("📝 [Mic Auto-transcription] Raw transcription (len={}): '{}'", transcription.len(), transcription);
+                                        
+                                        if !trimmed.is_empty() && trimmed.len() > 1 {
+                                            info!("🎯 [Mic Auto-transcription] Result: '{}'", trimmed);
+                                            
+                                            let hm_clone = Arc::clone(&hm);
+                                            let transcription_clone = trimmed.to_string();
+                                            let samples_clone2 = samples_clone.clone();
+                                            tauri::async_runtime::spawn(async move {
+                                                if let Err(e) = hm_clone.save_transcription(
+                                                    samples_clone2,
+                                                    transcription_clone.clone(),
+                                                    None,
+                                                    None,
+                                                ).await {
+                                                    error!("Failed to save mic auto-transcription to history: {}", e);
+                                                }
+                                            });
+                                            
+                                            info!("📤 [Mic LiveCaption] Emitting event with caption: '{}'", trimmed);
+                                            
+                                            if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
+                                                error!("❌ [Mic LiveCaption] Failed to emit: {}", e);
+                                            } else {
+                                                info!("✅ [Mic LiveCaption] Successfully emitted live-caption-update event");
+                                            }
+                                            
+                                            if let Err(e) = crate::utils::paste(trimmed.to_string(), app_handle.clone()) {
+                                                error!("Failed to paste mic auto-transcription: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Mic auto-transcription failed: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        
         Ok(())
     }
 

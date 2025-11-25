@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     io::Error,
     sync::{mpsc, Arc, Mutex},
     time::Duration,
@@ -19,6 +20,7 @@ use crate::audio_toolkit::{
 enum Cmd {
     Start,
     Stop(mpsc::Sender<Vec<f32>>),
+    ReadSamples(mpsc::Sender<Vec<f32>>),
     Shutdown,
 }
 
@@ -28,6 +30,8 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    // Continuous buffer for always-on mode (like system audio)
+    continuous_buffer: Arc<Mutex<VecDeque<f32>>>,
 }
 
 impl AudioRecorder {
@@ -38,6 +42,7 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            continuous_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(480000))), // 30s at 16kHz
         })
     }
 
@@ -74,6 +79,7 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let continuous_buffer = Arc::clone(&self.continuous_buffer);
 
         let worker = std::thread::spawn(move || {
             let config = AudioRecorder::get_preferred_config(&thread_device)
@@ -117,7 +123,7 @@ impl AudioRecorder {
             stream.play().expect("failed to start stream");
 
             // keep the stream alive while we process samples
-            run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb);
+            run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, continuous_buffer);
             // stream is dropped here, after run_consumer returns
         });
 
@@ -141,6 +147,16 @@ impl AudioRecorder {
             tx.send(Cmd::Stop(resp_tx))?;
         }
         Ok(resp_rx.recv()?) // wait for the samples
+    }
+
+    /// Read samples from continuous buffer without stopping recording
+    /// This is for always-on mode where we want continuous transcription
+    pub fn read_samples(&self) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+        let (resp_tx, resp_rx) = mpsc::channel();
+        if let Some(tx) = &self.cmd_tx {
+            tx.send(Cmd::ReadSamples(resp_tx))?;
+        }
+        Ok(resp_rx.recv()?)
     }
 
     pub fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -228,6 +244,7 @@ fn run_consumer(
     sample_rx: mpsc::Receiver<Vec<f32>>,
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    continuous_buffer: Arc<Mutex<VecDeque<f32>>>,
 ) {
     let mut frame_resampler = FrameResampler::new(
         in_sample_rate as usize,
@@ -254,7 +271,20 @@ fn run_consumer(
         recording: bool,
         vad: &Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
         out_buf: &mut Vec<f32>,
+        continuous_buf: &Arc<Mutex<VecDeque<f32>>>,
     ) {
+        // Always add to continuous buffer for always-on mode
+        {
+            let mut cont_buf = continuous_buf.lock().unwrap();
+            cont_buf.extend(samples);
+            // Keep buffer size reasonable (max 30 seconds at 16kHz)
+            const MAX_BUFFER_SIZE: usize = 480000;
+            if cont_buf.len() > MAX_BUFFER_SIZE {
+                let excess = cont_buf.len() - MAX_BUFFER_SIZE;
+                cont_buf.drain(..excess);
+            }
+        }
+        
         if !recording {
             return;
         }
@@ -284,8 +314,9 @@ fn run_consumer(
         }
 
         // ---------- existing pipeline ------------------------------------ //
+        let continuous_buffer_clone = Arc::clone(&continuous_buffer);
         frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            handle_frame(frame, recording, &vad, &mut processed_samples)
+            handle_frame(frame, recording, &vad, &mut processed_samples, &continuous_buffer_clone)
         });
 
         // non-blocking check for a command
@@ -302,12 +333,22 @@ fn run_consumer(
                 Cmd::Stop(reply_tx) => {
                     recording = false;
 
+                    let continuous_buffer_clone = Arc::clone(&continuous_buffer);
                     frame_resampler.finish(&mut |frame: &[f32]| {
                         // we still want to process the last few frames
-                        handle_frame(frame, true, &vad, &mut processed_samples)
+                        handle_frame(frame, true, &vad, &mut processed_samples, &continuous_buffer_clone)
                     });
 
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
+                }
+                Cmd::ReadSamples(reply_tx) => {
+                    // Read from continuous buffer without stopping recording
+                    let samples = {
+                        let mut cont_buf = continuous_buffer.lock().unwrap();
+                        let samples: Vec<f32> = cont_buf.drain(..).collect();
+                        samples
+                    };
+                    let _ = reply_tx.send(samples);
                 }
                 Cmd::Shutdown => return,
             }

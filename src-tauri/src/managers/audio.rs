@@ -1,5 +1,5 @@
 use crate::audio_toolkit::{
-    audio::FrameResampler,
+    audio::{FrameResampler, preprocess_audio},
     list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad,
     SystemAudioCapture,
 };
@@ -457,7 +457,7 @@ impl AudioRecordingManager {
                                         MIN_SAMPLES);
                                     let _ = app_handle.emit("log-update", format!("🔄 [Auto-transcription] Buffer ready: {}s audio, starting transcription...", current_buffer_size / 16000));
                                     // Take samples for transcription (keep overlap for next iteration)
-                                    let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
+                                    let mut samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
                                         // Take all except overlap samples
                                         let take_count = accumulated_buffer.len() - OVERLAP_SAMPLES;
                                         accumulated_buffer.drain(..take_count).collect()
@@ -547,6 +547,10 @@ impl AudioRecordingManager {
                                         info!("🔄 [Auto-transcription] Starting transcription for {} samples ({}s)", 
                                             samples_to_transcribe.len(),
                                             samples_to_transcribe.len() / 16000);
+                                        
+                                        // Apply audio preprocessing to improve transcription quality
+                                        // Similar to what Google Translate does: normalize, remove DC offset, high-pass filter
+                                        preprocess_audio(&mut samples_to_transcribe, TARGET_SAMPLE_RATE);
                                         
                                         // Don't emit log-update for starting transcription - too frequent, causes UI lag
                                         // Only log to backend
@@ -766,7 +770,7 @@ impl AudioRecordingManager {
                                         current_buffer_size, current_buffer_size / 16000);
                                     let _ = app_handle.emit("log-update", format!("🔄 [Auto-transcription] Buffer ready: {}s audio", current_buffer_size / 16000));
                                     
-                                    let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
+                                    let mut samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
                                         let take_count = accumulated_buffer.len() - OVERLAP_SAMPLES;
                                         accumulated_buffer.drain(..take_count).collect()
                                     } else {
@@ -829,6 +833,9 @@ impl AudioRecordingManager {
                                         }
                                         
                                         info!("🔄 [Auto-transcription] Starting transcription for {} samples", samples_to_transcribe.len());
+                                        
+                                        // Apply audio preprocessing to improve transcription quality
+                                        preprocess_audio(&mut samples_to_transcribe, TARGET_SAMPLE_RATE);
                                         
                                         match tm.transcribe(samples_to_transcribe) {
                                             Ok(transcription) => {
@@ -947,7 +954,6 @@ impl AudioRecordingManager {
                     const OVERLAP_SECS: usize = 1;
                     const MIN_SAMPLES: usize = MIN_AUDIO_SECS * 16000;
                     const OVERLAP_SAMPLES: usize = OVERLAP_SECS * 16000;
-                    const MIC_SAMPLE_RATE: usize = 16000; // Mic already at 16kHz
                     
                     let mut accumulated_buffer: VecDeque<f32> = VecDeque::new();
                     let mut previous_rms: Option<f32> = None;
@@ -1016,7 +1022,7 @@ impl AudioRecordingManager {
                             info!("✅ [Mic Auto-transcription] Buffer has {} samples ({}s), ready to transcribe!", 
                                 current_buffer_size, current_buffer_size / 16000);
                             
-                            let samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
+                            let mut samples_to_transcribe: Vec<f32> = if accumulated_buffer.len() > OVERLAP_SAMPLES {
                                 let take_count = accumulated_buffer.len() - OVERLAP_SAMPLES;
                                 accumulated_buffer.drain(..take_count).collect()
                             } else {
@@ -1076,6 +1082,10 @@ impl AudioRecordingManager {
                                 }
                                 
                                 info!("🔄 [Mic Auto-transcription] Starting transcription for {} samples", samples_to_transcribe.len());
+                                
+                                // Apply audio preprocessing to improve transcription quality
+                                // Mic already at 16kHz (same as Whisper requirement)
+                                preprocess_audio(&mut samples_to_transcribe, 16000);
                                 
                                 match tm.transcribe(samples_to_transcribe) {
                                     Ok(transcription) => {

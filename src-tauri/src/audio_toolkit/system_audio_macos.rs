@@ -289,7 +289,7 @@ impl MacOSSystemAudio {
             let mut buf = buffer.lock().unwrap();
             
             // Calculate RMS for first few callbacks to check if audio is present
-            if callback_count <= 5 {
+            if callback_count <= 10 {
                 let rms = if data.is_empty() {
                     0.0
                 } else {
@@ -304,8 +304,17 @@ impl MacOSSystemAudio {
                 let max_amp = data.iter()
                     .map(|&s| s.to_sample::<f32>().abs())
                     .fold(0.0f32, |a, b| a.max(b));
-                log::info!("🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.6}, Max: {:.6}", 
-                    callback_count, data.len(), rms, max_amp);
+                
+                // Debug: Check first few raw samples to see what we're getting
+                let first_samples: Vec<f32> = data.iter().take(10).map(|&s| s.to_sample::<f32>()).collect();
+                log::info!("🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.6}, Max: {:.6}, First 10: {:?}", 
+                    callback_count, data.len(), rms, max_amp, first_samples);
+                
+                // If all samples are zero, log a warning
+                if max_amp < 0.00001 && callback_count == 5 {
+                    log::warn!("⚠️ [BlackHole] All samples are ZERO! This means BlackHole is not receiving audio.");
+                    log::warn!("⚠️ [BlackHole] Check: 1) Is Multi-Output Device set as Sound Output? 2) Is audio actually playing?");
+                }
             }
             
             if channels == 1 {

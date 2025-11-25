@@ -167,6 +167,7 @@ impl MacOSSystemAudio {
         ));
         
         let buffer = self.sample_buffer.clone();
+        let app_handle = self.app_handle.clone();
         
         // Create stream in thread worker (like AudioRecorder does)
         // This avoids Send issues since stream stays in the thread
@@ -175,13 +176,13 @@ impl MacOSSystemAudio {
             // Build and start stream in this thread
             let stream_result: Result<cpal::Stream, cpal::BuildStreamError> = match config.sample_format() {
                 cpal::SampleFormat::F32 => {
-                    Self::build_blackhole_stream_in_thread::<f32>(&device, &config, buffer.clone(), channels)
+                    Self::build_blackhole_stream_in_thread::<f32>(&device, &config, buffer.clone(), channels, app_handle.clone())
                 }
                 cpal::SampleFormat::I16 => {
-                    Self::build_blackhole_stream_in_thread::<i16>(&device, &config, buffer.clone(), channels)
+                    Self::build_blackhole_stream_in_thread::<i16>(&device, &config, buffer.clone(), channels, app_handle.clone())
                 }
                 cpal::SampleFormat::I32 => {
-                    Self::build_blackhole_stream_in_thread::<i32>(&device, &config, buffer.clone(), channels)
+                    Self::build_blackhole_stream_in_thread::<i32>(&device, &config, buffer.clone(), channels, app_handle.clone())
                 }
                 _ => {
                     log::error!("Unsupported BlackHole sample format: {:?}", config.sample_format());
@@ -282,18 +283,20 @@ impl MacOSSystemAudio {
         config: &cpal::SupportedStreamConfig,
         buffer: Arc<Mutex<VecDeque<f32>>>,
         channels: usize,
+        app_handle: AppHandle,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
     where
         T: Sample + SizedSample + Send + 'static,
         f32: cpal::FromSample<T>,
     {
         let mut callback_count = 0u64;
-        let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
+        let stream_cb = move |data: &[T], _info: &cpal::InputCallbackInfo| {
             callback_count += 1;
             let mut buf = buffer.lock().unwrap();
             
-            // Always log first 20 callbacks for debugging, then every 100 callbacks
-            let should_log = callback_count <= 20 || callback_count % 100 == 0;
+            // CRITICAL: Log EVERY callback for first 50 to catch any issues
+            // Then log every 50th callback for continuous monitoring
+            let should_log = callback_count <= 50 || callback_count % 50 == 0;
             
             if should_log {
                 let rms = if data.is_empty() {
@@ -316,8 +319,21 @@ impl MacOSSystemAudio {
                 let min_sample = first_samples.iter().fold(0.0f32, |a, &b| a.min(b.abs()));
                 let max_sample = first_samples.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
                 
-                log::info!("🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.9}, Max: {:.9}, Range: [{:.9}, {:.9}], First 10: {:?}", 
-                    callback_count, data.len(), rms, max_amp, min_sample, max_sample, first_samples);
+                // Log with timestamp and detailed info
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                log::info!("🎵 [BlackHole] Callback #{} (t={}ms): {} samples, RMS: {:.9}, Max: {:.9}, Range: [{:.9}, {:.9}], First 10: {:?}", 
+                    callback_count, timestamp, data.len(), rms, max_amp, min_sample, max_sample, first_samples);
+                
+                // Also emit to frontend for first 10 callbacks
+                if callback_count <= 10 {
+                    let _ = app_handle.emit("log-update", format!(
+                        "🎵 [BlackHole] Callback #{}: {} samples, RMS: {:.6}, Max: {:.6}", 
+                        callback_count, data.len(), rms, max_amp
+                    ));
+                }
                 
                 // If all samples are zero, log warnings at key points
                 if max_amp < 0.00001 {

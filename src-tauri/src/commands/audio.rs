@@ -5,7 +5,7 @@ use crate::settings::{get_settings, write_settings, AudioSource};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize)]
 pub struct CustomSounds {
@@ -182,7 +182,7 @@ pub fn get_clamshell_microphone(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn set_audio_source(app: AppHandle, source: String) -> Result<(), String> {
+pub async fn set_audio_source(app: AppHandle, source: String) -> Result<(), String> {
     let mut settings = get_settings(&app);
     let audio_source = match source.as_str() {
         "microphone" => Some(AudioSource::Microphone),
@@ -193,10 +193,20 @@ pub fn set_audio_source(app: AppHandle, source: String) -> Result<(), String> {
     write_settings(&app, settings);
 
     // Update the audio manager to use the new source
+    // Spawn in background thread to avoid blocking UI
     let rm = app.state::<Arc<AudioRecordingManager>>();
-    rm.update_selected_device()
-        .map_err(|e| format!("Failed to update audio source: {}", e))?;
+    let rm_clone = Arc::clone(&rm);
+    let app_clone = app.clone();
+    
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = rm_clone.update_selected_device() {
+            log::error!("Failed to update audio source: {}", e);
+            // Emit error event to frontend
+            let _ = app_clone.emit("log-update", format!("❌ [AudioSource] Failed to update: {}", e));
+        }
+    });
 
+    // Return immediately to avoid blocking UI
     Ok(())
 }
 

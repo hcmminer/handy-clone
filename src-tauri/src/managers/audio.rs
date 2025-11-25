@@ -593,13 +593,18 @@ impl AudioRecordingManager {
                 tauri::path::BaseDirectory::Resource,
             )
             .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;
+        // Lazy load VAD model - only create recorder when needed to avoid blocking
+        // This prevents UI lag when switching audio sources
         let mut recorder_opt = self.recorder.lock().unwrap();
 
         if recorder_opt.is_none() {
+            info!("🔄 [AudioSource] Loading VAD model (this may take a moment)...");
+            let start_vad = Instant::now();
             *recorder_opt = Some(create_audio_recorder(
                 vad_path.to_str().unwrap(),
                 &self.app_handle,
             )?);
+            info!("✅ [AudioSource] VAD model loaded in {:?}", start_vad.elapsed());
         }
 
         // Get the selected device from settings, considering clamshell mode

@@ -10,7 +10,7 @@ export const LiveCaptionViewer: React.FC = () => {
   const [logs, setLogs] = useState<Array<{ time: string; message: string; type: 'info' | 'warn' | 'error' | 'debug' }>>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const [autoScroll, setAutoScroll] = useState<boolean>(false); // Disabled by default to prevent UI lag
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
   const maxLogs = 100;
 
@@ -117,24 +117,29 @@ export const LiveCaptionViewer: React.FC = () => {
     setIsAtBottom(checkIfAtBottom());
   };
 
-  // Auto-scroll only if user is at bottom and auto-scroll is enabled
-  // Throttle scroll calls to prevent UI lag when logs update frequently
+  // Auto-scroll only if user explicitly enables it and is at bottom
+  // Disabled by default to prevent UI lag and unwanted scrolling
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
-    if (autoScroll && isAtBottom && logEndRef.current) {
+    // Only auto-scroll if user explicitly enabled it
+    if (!autoScroll) {
+      return;
+    }
+    
+    if (isAtBottom && logEndRef.current) {
       // Clear any pending scroll
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current);
       }
       
-      // Throttle scroll to max once per 100ms to prevent UI lag
+      // Throttle scroll to max once per 200ms to prevent UI lag
       scrollTimeoutRef.current = setTimeout(() => {
         if (logEndRef.current && isAtBottom && autoScroll) {
           // Use instant scroll instead of smooth to reduce lag
           logEndRef.current.scrollIntoView({ behavior: 'auto' });
         }
-      }, 100);
+      }, 200);
     }
     
     return () => {

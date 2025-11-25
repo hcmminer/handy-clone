@@ -244,49 +244,10 @@ export const SystemAudioStatus: React.FC = () => {
     }
   }, [permissionStatus, captureStatus, audioDetectionStatus]);
 
-  // Periodic status check - query backend status every 5 seconds if UI is still unknown
-  // This is a fallback in case log events are missed or listener wasn't ready
-  // Increased interval to 5s to reduce load and prevent UI lag
-  useEffect(() => {
-    // Don't run periodic check if we already have status - reduces unnecessary invokes
-    if (permissionStatus !== "unknown" && captureStatus !== "unknown") {
-      return;
-    }
-    
-    const interval = setInterval(async () => {
-      // Only query if we still don't have permission or capture status
-      if (permissionStatus === "unknown" || captureStatus === "unknown") {
-        try {
-          const status = await invoke<{
-            permission: string;
-            capture: string;
-            audio_detection: string;
-          }>("get_system_audio_status");
-          
-          console.log("🔄 [SystemAudioStatus] Periodic status check:", JSON.stringify(status, null, 2));
-          
-          // Update permission status if still unknown and backend says granted
-          // But only if we haven't received any log events yet
-          if (permissionStatus === "unknown" && status.permission === "granted") {
-            console.log("🔄 [SystemAudioStatus] Updating permission from periodic check");
-            setPermissionStatus("granted");
-          }
-          
-          // Update capture status if still unknown and backend says active
-          if (captureStatus === "unknown" && status.capture === "active") {
-            console.log("🔄 [SystemAudioStatus] Updating capture from periodic check");
-            setCaptureStatus("active");
-          } else if (captureStatus === "unknown" && status.capture === "waiting") {
-            setCaptureStatus("waiting");
-          }
-        } catch (err) {
-          console.error("❌ [SystemAudioStatus] Failed to query periodic status:", err);
-        }
-      }
-    }, 5000); // Check every 5 seconds (reduced frequency to prevent UI lag)
-
-    return () => clearInterval(interval);
-  }, [permissionStatus, captureStatus]);
+  // Removed periodic status check - rely on event listeners only
+  // Event listeners are more efficient and don't cause UI lag
+  // If status is still unknown after initial query + 1s delay, it will remain unknown
+  // User can manually refresh if needed
 
   const getStatusConfig = (status: Status): { color: string; bgColor: string; icon: string } => {
     switch (status) {

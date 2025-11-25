@@ -655,6 +655,12 @@ impl AudioRecordingManager {
             let _ = rec.close();
         }
 
+        // Reset recording state to Idle so we can start recording again later
+        {
+            let mut state = self.state.lock().unwrap();
+            *state = RecordingState::Idle;
+        }
+
         *open_flag = false;
         debug!("Microphone stream stopped");
     }

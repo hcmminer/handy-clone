@@ -24,12 +24,16 @@ macOS ScreenCaptureKit không gửi audio buffers trong nhiều trường hợp,
 
 **Cách sử dụng:**
 
-**Option 1: Chỉ dùng BlackHole (mất audio từ speakers)**
+**⚠️ QUAN TRỌNG:** Nếu chọn "BlackHole 2ch" trực tiếp làm Output, bạn sẽ KHÔNG nghe được âm thanh từ speakers! Audio chỉ được route đến BlackHole để app capture, nhưng không phát ra speakers nữa.
+
+**Option 1: Chỉ dùng BlackHole (KHÔNG KHUYẾN NGHỊ - mất audio từ speakers) ⚠️**
 1. User cài đặt BlackHole: `brew install blackhole-2ch` hoặc download từ [GitHub](https://github.com/ExistentialAudio/BlackHole)
 2. System Settings > Sound > Output: Chọn "BlackHole 2ch"
 3. App tự động detect và capture từ BlackHole
+4. **❌ Nhược điểm:** Bạn sẽ KHÔNG nghe được âm thanh từ speakers!
+5. **✅ Chỉ dùng nếu:** Bạn không cần nghe audio (ví dụ: chỉ cần transcription text)
 
-**Option 2: Multi-Output Device (giữ audio từ speakers + capture) - KHUYẾN NGHỊ ⭐**
+**Option 2: Multi-Output Device (giữ audio từ speakers + capture) - KHUYẾN NGHỊ ⭐⭐⭐**
 1. User cài đặt BlackHole: `brew install blackhole-2ch`
 2. Mở **Audio MIDI Setup** (Applications > Utilities > Audio MIDI Setup)
 3. Click **+** button ở bottom-left, chọn **Create Multi-Output Device**

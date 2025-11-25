@@ -82,10 +82,20 @@ impl MacOSSystemAudio {
                         log::error!("❌ [SystemAudio] Current output: '{}'", name);
                         log::error!("❌ [SystemAudio] Audio from Chrome/system will NOT be routed to BlackHole!");
                         log::error!("❌ [SystemAudio] This is why you're seeing RMS: 0.000000 (silence)");
-                        log::warn!("💡 [SystemAudio] SOLUTION: Configure Sound OUTPUT (not Input) to route audio:");
-                        log::warn!("   Option 1: System Settings > Sound > Output: Select 'BlackHole 2ch'");
-                        log::warn!("   Option 2: Create Multi-Output Device (BlackHole + Speakers) in Audio MIDI Setup");
-                        log::warn!("   Then set Multi-Output Device as default OUTPUT");
+                        log::warn!("💡 [SystemAudio] ⭐ RECOMMENDED SOLUTION: Create Multi-Output Device (giữ audio từ speakers + capture)");
+                        log::warn!("   📋 Steps:");
+                        log::warn!("   1. Mở Audio MIDI Setup (Applications > Utilities > Audio MIDI Setup)");
+                        log::warn!("   2. Click '+' button ở bottom-left, chọn 'Create Multi-Output Device'");
+                        log::warn!("   3. Trong Multi-Output Device:");
+                        log::warn!("      ✅ Check box cho 'BlackHole 2ch'");
+                        log::warn!("      ✅ Check box cho '{}' (speakers hiện tại)", name);
+                        log::warn!("      ⚠️ Đảm bảo Master Device là '{}' (để volume control hoạt động)", name);
+                        log::warn!("   4. System Settings > Sound > Output: Chọn Multi-Output Device vừa tạo");
+                        log::warn!("   ✅ Kết quả: Audio vẫn phát từ speakers VÀ được capture bởi app!");
+                        log::warn!("");
+                        log::warn!("   ⚠️ Alternative (KHÔNG KHUYẾN NGHỊ): Chọn 'BlackHole 2ch' trực tiếp");
+                        log::warn!("      ❌ Bạn sẽ KHÔNG nghe được âm thanh từ speakers!");
+                        log::warn!("      ✅ Chỉ dùng nếu bạn không cần nghe audio (ví dụ: chỉ cần transcription)");
                     } else {
                         log::info!("✅ [SystemAudio] Default OUTPUT is '{}' - audio should be routed correctly", name);
                         if name.contains("Multi-Output") {

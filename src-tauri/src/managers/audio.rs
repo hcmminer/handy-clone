@@ -244,7 +244,6 @@ impl AudioRecordingManager {
 
     pub fn start_microphone_stream(&self) -> Result<(), anyhow::Error> {
         let mut open_flag = self.is_open.lock().unwrap();
-        let was_already_open = *open_flag;
         if *open_flag {
             debug!("Microphone stream already active");
             // Even if already open, ensure auto-transcription is started for SystemAudio
@@ -490,14 +489,23 @@ impl AudioRecordingManager {
                                             // Warn if audio seems silent
                                             if rms < 0.00001 && max_amplitude < 0.01 {
                                                 silence_detected_count += 1;
-                                                if silence_detected_count % 10 == 0 { // Log every 10 silent detections
-                                                    warn!("⚠️ [Auto-transcription] Audio appears to be silent (RMS: {:.6}, Max: {:.6}) - checked {} times. Please check Sound preferences: Output should be set to BlackHole 2ch", rms, max_amplitude, silence_detected_count);
-                                                    let _ = app_handle.emit("log-update", format!("⚠️ [Auto-transcription] Audio appears silent (checked {} times). Please set Sound Output to BlackHole 2ch in System Settings", silence_detected_count));
+                                                if silence_detected_count == 1 {
+                                                    // First detection - emit clear instructions
+                                                    warn!("⚠️ [Auto-transcription] Audio is SILENT (RMS: {:.6}, Max: {:.6}). BlackHole is capturing but no audio is flowing.", rms, max_amplitude);
+                                                    let _ = app_handle.emit("log-update", "⚠️ [Config] Audio is SILENT! Please configure Sound Output:");
+                                                    let _ = app_handle.emit("log-update", "   1. Open System Settings > Sound");
+                                                    let _ = app_handle.emit("log-update", "   2. Set Output to 'BlackHole 2ch' OR create Multi-Output Device");
+                                                    let _ = app_handle.emit("log-update", "   3. See HUONG_DAN_CAI_DAT_BLACKHOLE.md for details");
+                                                } else if silence_detected_count % 10 == 0 {
+                                                    // Periodic reminder
+                                                    warn!("⚠️ [Auto-transcription] Audio still silent (checked {} times). RMS: {:.6}, Max: {:.6}", silence_detected_count, rms, max_amplitude);
+                                                    let _ = app_handle.emit("log-update", format!("⚠️ [Config] Still silent ({} checks). Set Sound Output to BlackHole 2ch!", silence_detected_count));
                                                 }
                                             } else {
                                                 // Reset silence counter when audio is detected
                                                 if silence_detected_count > 0 {
-                                                    info!("✅ [Auto-transcription] Audio detected after {} silent checks! RMS: {:.6}, Max: {:.6}", silence_detected_count, rms, max_amplitude);
+                                                    info!("🎉 [Auto-transcription] ✅✅✅ AUDIO DETECTED after {} silent checks! RMS: {:.6}, Max: {:.6}", silence_detected_count, rms, max_amplitude);
+                                                    let _ = app_handle.emit("log-update", format!("🎉 [Auto-transcription] ✅✅✅ AUDIO DETECTED! RMS: {:.6} - Live caption will work now!", rms));
                                                     silence_detected_count = 0;
                                                 }
                                             }

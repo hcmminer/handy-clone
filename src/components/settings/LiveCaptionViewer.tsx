@@ -22,7 +22,7 @@ export const LiveCaptionViewer: React.FC = () => {
     const time = new Date().toLocaleTimeString();
     pendingLogsRef.current.push({ time, message, type });
     
-    // Throttle: only update logs max once per 200ms to prevent UI lag
+    // Throttle: only update logs max once per 500ms to prevent UI lag
     if (logUpdateTimeoutRef.current) {
       return; // Already scheduled
     }
@@ -34,7 +34,7 @@ export const LiveCaptionViewer: React.FC = () => {
         return newLogs.slice(-maxLogs);
       });
       logUpdateTimeoutRef.current = null;
-    }, 200);
+    }, 500);
   }, []);
 
   useEffect(() => {
@@ -63,7 +63,7 @@ export const LiveCaptionViewer: React.FC = () => {
 
     // Throttle log listener to prevent UI lag when too many logs come in
     let lastLogTime = 0;
-    const LOG_THROTTLE_MS = 100; // Only process logs max once per 100ms
+    const LOG_THROTTLE_MS = 500; // Only process logs max once per 500ms (increased to reduce lag)
     
     const unlistenLog = listen<string>("log-update", (event) => {
       const now = Date.now();

@@ -350,11 +350,12 @@ impl AudioRecordingManager {
                                     #[cfg(target_os = "macos")]
                                     {
                                         if let Some(capture) = rm.system_capture.lock().unwrap().as_mut() {
-                                            match capture.read_samples() {
+                                                match capture.read_samples() {
                                                 Ok(Some(s)) => {
                                                     if !s.is_empty() {
                                                         info!("🎙️ [Auto-transcription] ✅ Read {} new samples from system capture ({}s audio)", s.len(), s.len() / 16000);
-                                                        let _ = app_handle.emit("log-update", format!("🎙️ [Auto-transcription] ✅ Read {} new samples from system capture ({}s audio)", s.len(), s.len() / 16000));
+                                                        // Don't emit log-update for every read - too frequent, causes UI lag
+                                                        // Only log to backend, frontend doesn't need to know every read
                                                         Some(s)
                                                     } else {
                                                         debug!("Auto-transcription: System capture returned empty samples");
@@ -410,9 +411,8 @@ impl AudioRecordingManager {
                                         total_count, 
                                         total_count / 16000);
                                     
-                                    // Emit log to frontend
-                                    let _ = app_handle.emit("log-update", format!("📥 [Auto-transcription] Resampled {} samples (48kHz) -> {} samples (16kHz), total buffer: {} samples ({}s)", 
-                                        input_count, resampled_count, total_count, total_count / 16000));
+                                    // Don't emit log-update for resampling - too frequent, causes UI lag
+                                    // Only log to backend
                                 } else {
                                     // Log periodically when no samples are available
                                     static NO_SAMPLES_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -484,11 +484,8 @@ impl AudioRecordingManager {
                                             // Update previous RMS for next iteration
                                             previous_rms = Some(rms);
                                         
-                                        // Emit log event to frontend
-                                        let _ = app_handle.emit("log-update", format!("🎙️ [Auto-transcription] Processing {} samples ({}s audio, {}s overlap kept)",
-                                                samples_to_transcribe.len(),
-                                                samples_to_transcribe.len() / 16000,
-                                                accumulated_buffer.len() / 16000));
+                                        // Don't emit log-update for processing - too frequent, causes UI lag
+                                        // Only log to backend
                                 
                                         // Trigger transcription
                                         let tm = app_handle.state::<Arc<crate::managers::transcription::TranscriptionManager>>();
@@ -516,18 +513,16 @@ impl AudioRecordingManager {
                                             samples_to_transcribe.len(),
                                             samples_to_transcribe.len() / 16000);
                                         
-                                        // Emit log event to frontend
-                                        let _ = app_handle.emit("log-update", format!("🔄 [Auto-transcription] Starting transcription for {} samples ({}s)", 
-                                            samples_to_transcribe.len(),
-                                            samples_to_transcribe.len() / 16000));
+                                        // Don't emit log-update for starting transcription - too frequent, causes UI lag
+                                        // Only log to backend
                                         
                                         match tm.transcribe(samples_to_transcribe) {
                                             Ok(transcription) => {
                                                 let trimmed = transcription.trim();
                                                 info!("📝 [Auto-transcription] Raw transcription received (len={}): '{}'", transcription.len(), transcription);
                                                 
-                                                // Emit log event
-                                                let _ = app_handle.emit("log-update", format!("📝 [Auto-transcription] Raw transcription received (len={}): '{}'", transcription.len(), transcription));
+                                                // Don't emit log-update for raw transcription - too frequent, causes UI lag
+                                                // Only emit final result
                                                 
                                                 // Always log transcription results - this is important!
                                                 if !trimmed.is_empty() && trimmed.len() > 1 {
@@ -535,7 +530,8 @@ impl AudioRecordingManager {
                                                     info!("🎯 [Auto-transcription] Result (len={}): '{}'", trimmed.len(), trimmed);
                                                     
                                                     // Emit log event
-                                                    let _ = app_handle.emit("log-update", format!("🎯 [Auto-transcription] Result (len={}): '{}'", trimmed.len(), trimmed));
+                                                    // Don't emit log-update for result - already emitted via live-caption-update
+                                                    // Only log to backend
                                                     
                                                     // Save to history (async)
                                                     let hm_clone = Arc::clone(&hm);
@@ -555,15 +551,11 @@ impl AudioRecordingManager {
                                                     // Emit live caption event to frontend
                                                     info!("📤 [LiveCaption] Emitting event with caption ({} chars): '{}'", trimmed.len(), trimmed);
                                                     
-                                                    // Emit log event
-                                                    let _ = app_handle.emit("log-update", format!("📤 [LiveCaption] Emitting event with caption ({} chars): '{}'", trimmed.len(), trimmed));
-                                                    
+                                                    // Don't emit log-update for every caption - too frequent, causes UI lag
+                                                    // Only emit the actual caption event
                                                     if let Err(e) = app_handle.emit("live-caption-update", trimmed.to_string()) {
                                                         error!("❌ [LiveCaption] Failed to emit live-caption-update event: {}", e);
-                                                        let _ = app_handle.emit("log-update", format!("❌ [LiveCaption] Failed to emit live-caption-update event: {}", e));
-                                                    } else {
-                                                        info!("✅ [LiveCaption] Event emitted successfully");
-                                                        let _ = app_handle.emit("log-update", "✅ [LiveCaption] Event emitted successfully");
+                                                        // Only emit error logs, not success logs
                                                     }
                                                     
                                                     // Paste the transcription

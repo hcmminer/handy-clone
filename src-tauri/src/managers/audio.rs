@@ -792,8 +792,8 @@ impl AudioRecordingManager {
             info!("🔄 [AudioSource] Audio source changed, stopping current stream...");
             self.stop_microphone_stream();
             
-            // Small delay to ensure cleanup completes
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // No delay needed - stop_microphone_stream() already handles cleanup synchronously
+            // The delay was causing UI lag
             
             info!("🔄 [AudioSource] Starting new stream with updated source...");
             self.start_microphone_stream()?;

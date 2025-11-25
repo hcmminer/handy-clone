@@ -615,11 +615,16 @@ impl SystemAudioCapture for MacOSSystemAudio {
                 log::info!("🛑 [SystemAudio] Signaling BlackHole thread to stop...");
                 let _ = tx.send(()); // Signal thread to stop
             }
-            // Wait for thread to finish
+            // Don't wait for thread to finish - let it finish in background to avoid blocking UI
+            // The thread will finish and drop the stream automatically
             if let Some(thread_handle) = self.blackhole_thread.take() {
-                log::info!("🛑 [SystemAudio] Waiting for BlackHole thread to finish...");
-                let _ = thread_handle.join(); // Wait for thread to finish (drops stream)
-                log::info!("✅ [SystemAudio] BlackHole thread finished");
+                log::info!("🛑 [SystemAudio] Signaling BlackHole thread to stop (will finish in background)...");
+                // Spawn a background thread to wait for the BlackHole thread to finish
+                // This prevents blocking the main thread and causing UI lag
+                std::thread::spawn(move || {
+                    let _ = thread_handle.join(); // Wait in background thread
+                    log::info!("✅ [SystemAudio] BlackHole thread finished (background cleanup)");
+                });
             }
         } else {
             // Stop ScreenCaptureKit helper

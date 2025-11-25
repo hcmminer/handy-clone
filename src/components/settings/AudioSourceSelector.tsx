@@ -36,10 +36,9 @@ export const AudioSourceSelector: React.FC<AudioSourceSelectorProps> = React.mem
 
     const handleAudioSourceSelect = async (source: string) => {
       try {
-        await invoke("set_audio_source", { source });
-        setAudioSource(source);
-        // Also update in settings store
+        // updateSetting will call set_audio_source backend command
         await updateSetting("audio_source", source as "microphone" | "system_audio");
+        setAudioSource(source);
       } catch (error) {
         console.error("Failed to set audio source:", error);
       }
@@ -47,9 +46,9 @@ export const AudioSourceSelector: React.FC<AudioSourceSelectorProps> = React.mem
 
     const handleReset = async () => {
       try {
-        await invoke("set_audio_source", { source: "microphone" });
-        setAudioSource("microphone");
+        // resetSetting will call set_audio_source backend command via updateSetting
         await resetSetting("audio_source");
+        setAudioSource("microphone");
       } catch (error) {
         console.error("Failed to reset audio source:", error);
       }

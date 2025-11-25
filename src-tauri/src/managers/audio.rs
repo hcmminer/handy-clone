@@ -330,6 +330,13 @@ impl AudioRecordingManager {
                                     break;
                                 }
                                 
+                                // Check if audio source is still SystemAudio (may have changed)
+                                let audio_source = settings.audio_source.unwrap_or(crate::settings::AudioSource::Microphone);
+                                if audio_source != crate::settings::AudioSource::SystemAudio {
+                                    info!("Audio source changed from SystemAudio to {:?}, stopping auto-transcription", audio_source);
+                                    break;
+                                }
+                                
                                 // Ensure recording is active (for system audio, this just ensures buffer is ready)
                                 if !*rm.is_recording.lock().unwrap() {
                                     if !rm.try_start_recording(&binding_id) {
@@ -756,10 +763,35 @@ impl AudioRecordingManager {
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
+        // Prevent duplicate calls - check if we're already updating
+        static IS_UPDATING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        
+        if IS_UPDATING.swap(true, std::sync::atomic::Ordering::Acquire) {
+            warn!("⚠️ [AudioSource] update_selected_device already in progress, skipping duplicate call");
+            return Ok(());
+        }
+        
+        // Use a guard to ensure IS_UPDATING is reset even on error
+        struct UpdateGuard;
+        impl Drop for UpdateGuard {
+            fn drop(&mut self) {
+                IS_UPDATING.store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let _guard = UpdateGuard;
+        
         // If currently open, restart the microphone stream to use the new device
-        if *self.is_open.lock().unwrap() {
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+            info!("🔄 [AudioSource] Audio source changed, stopping current stream...");
             self.stop_microphone_stream();
+            
+            // Small delay to ensure cleanup completes
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            
+            info!("🔄 [AudioSource] Starting new stream with updated source...");
             self.start_microphone_stream()?;
+            info!("✅ [AudioSource] Stream restarted successfully");
         }
         Ok(())
     }

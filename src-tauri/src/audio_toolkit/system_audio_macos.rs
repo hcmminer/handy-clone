@@ -350,8 +350,12 @@ impl MacOSSystemAudio {
 
 impl SystemAudioCapture for MacOSSystemAudio {
     fn start_capture(&mut self) -> Result<()> {
+        // If already capturing, stop first to ensure clean state
         if self.is_capturing {
-            return Ok(());
+            log::warn!("⚠️ [SystemAudio] Already capturing, stopping first to ensure clean state...");
+            let _ = self.stop_capture();
+            // Small delay to ensure cleanup completes
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
 
         // Strategy 1: Try BlackHole first (more reliable)
@@ -598,30 +602,45 @@ impl SystemAudioCapture for MacOSSystemAudio {
 
     fn stop_capture(&mut self) -> Result<()> {
         if !self.is_capturing {
+            log::debug!("[SystemAudio] Not capturing, nothing to stop");
             return Ok(());
         }
+
+        log::info!("🛑 [SystemAudio] Stopping capture (method: {})", 
+            if self.use_blackhole { "BlackHole" } else { "ScreenCaptureKit" });
 
         if self.use_blackhole {
             // Stop BlackHole stream by signaling stop
             if let Some(tx) = self.blackhole_stop_tx.take() {
-                log::info!("Stopping BlackHole stream");
+                log::info!("🛑 [SystemAudio] Signaling BlackHole thread to stop...");
                 let _ = tx.send(()); // Signal thread to stop
             }
             // Wait for thread to finish
             if let Some(thread_handle) = self.blackhole_thread.take() {
+                log::info!("🛑 [SystemAudio] Waiting for BlackHole thread to finish...");
                 let _ = thread_handle.join(); // Wait for thread to finish (drops stream)
+                log::info!("✅ [SystemAudio] BlackHole thread finished");
             }
         } else {
             // Stop ScreenCaptureKit helper
             if let Some(mut child) = self.capture_process.take() {
-                log::info!("Stopping SCK helper");
+                log::info!("🛑 [SystemAudio] Stopping SCK helper process...");
                 let _ = child.kill();
                 let _ = child.wait();
+                log::info!("✅ [SystemAudio] SCK helper process stopped");
             }
+        }
+
+        // Clear sample buffer
+        {
+            let mut buffer = self.sample_buffer.lock().unwrap();
+            buffer.clear();
+            log::info!("🧹 [SystemAudio] Cleared sample buffer");
         }
 
         self.is_capturing = false;
         self.use_blackhole = false;
+        log::info!("✅ [SystemAudio] Capture stopped successfully");
         Ok(())
     }
 

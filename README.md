@@ -105,18 +105,39 @@ tail -100 ~/.config/com.pais.handy/logs/handy.log
 - `Auto-transcription thread started` - Continuous transcription mode
 - `live-caption-update` - Live caption events
 
-**Troubleshooting System Audio Capture (macOS):**
+**System Audio Capture (macOS):**
 
-If you see `❌ Error getting shareable content: The user declined TCCs` in the logs, you need to grant Screen Recording permission:
+Handy uses **BlackHole** virtual audio device to capture system audio (from Chrome, YouTube, Spotify, etc.).
 
-1. Open **System Settings** → **Privacy & Security** → **Screen Recording**
-2. Find and enable permission for:
-   - **Terminal** (if running via `bun tauri dev`)
-   - **Handy** (if running the built app)
-3. Restart the application after granting permission
-4. Check logs again - you should see `✅ First audio buffer received!` when audio is playing
+**📘 Hướng Dẫn Cài Đặt (Vietnamese):** Xem [HUONG_DAN_CAI_DAT_BLACKHOLE.md](HUONG_DAN_CAI_DAT_BLACKHOLE.md)
 
-**Note:** On macOS, Screen Recording permission is required to capture system audio using ScreenCaptureKit.
+**Quick Setup (English):**
+
+1. **Install BlackHole:**
+   ```bash
+   brew install blackhole-2ch
+   ```
+   Or download from [GitHub](https://github.com/ExistentialAudio/BlackHole/releases)
+
+2. **Create Multi-Output Device:**
+   - Open **Audio MIDI Setup** (Applications > Utilities)
+   - Click **"+"** → **"Create Multi-Output Device"**
+   - Check **BlackHole 2ch** and **Built-in Output**
+   - Set **Master Device** to **Built-in Output** (for volume control)
+
+3. **Configure Sound Output:**
+   - **System Settings** → **Sound** → **Output**
+   - Select your **Multi-Output Device** (not "BlackHole 2ch" directly)
+
+4. **Restart Mac** after installing BlackHole
+
+**Troubleshooting:**
+
+- If you see `❌ Default OUTPUT is NOT BlackHole` in logs → Check Sound Output settings
+- If you see `RMS: 0.000000` (silence) → Audio is not routed to BlackHole, check Multi-Output Device configuration
+- See [HUONG_DAN_CAI_DAT_BLACKHOLE.md](HUONG_DAN_CAI_DAT_BLACKHOLE.md) for detailed troubleshooting
+
+**Note:** BlackHole is the primary method. ScreenCaptureKit is only used as fallback when BlackHole is not available.
 
 ## Known Issues & Current Limitations
 

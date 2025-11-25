@@ -49,9 +49,16 @@ export const LiveCaptionViewer: React.FC = () => {
 
     const unlistenCaption = listen<string>("live-caption-update", (event) => {
       const newCaption = event.payload.trim();
+      console.log(`🎯 [LiveCaptionViewer] Event received! Payload length: ${event.payload.length}, trimmed: ${newCaption.length}, content: "${newCaption.substring(0, 50)}${newCaption.length > 50 ? '...' : ''}"`);
+      addLog('info', `🎯 [LiveCaptionViewer] Event received (${event.payload.length} chars raw, ${newCaption.length} chars trimmed)`);
+      
       if (newCaption && newCaption.length > 1) {
+        console.log(`✅ [LiveCaptionViewer] Setting caption: "${newCaption}"`);
         setCaption(newCaption);
-        addLog('info', `🎯 Caption received: "${newCaption}"`);
+        addLog('info', `✅ Caption set: "${newCaption}"`);
+      } else {
+        console.warn(`⚠️ [LiveCaptionViewer] Caption too short or empty: length=${newCaption.length}`);
+        addLog('warn', `⚠️ Caption too short (length: ${newCaption.length})`);
       }
     });
 

@@ -423,6 +423,56 @@ Time:  0s    3s    6s    9s    12s
 
 ---
 
+## 🖥️ macOS Version Support
+
+### **Minimum System Version**
+
+**App Bundle:** macOS 10.13 (High Sierra) - theo `tauri.conf.json`
+```json
+"macOS": {
+  "minimumSystemVersion": "10.13"
+}
+```
+
+### **System Audio Capture Methods**
+
+**1. BlackHole (Primary Method - Khuyến nghị) ⭐**
+- **Supported macOS:** 10.9+ (Mavericks trở lên)
+- **Không cần version check** - BlackHole hoạt động trên macOS cũ
+- **Không cần Screen Recording permission** - chỉ cần Microphone permission
+- **Hoạt động ổn định** trên mọi macOS version hỗ trợ BlackHole
+
+**2. ScreenCaptureKit (Fallback Method)**
+- **Required macOS:** 13.0+ (Ventura trở lên)
+- **Code check:**
+  ```swift
+  if #available(macOS 13.0, *) {
+      runCapture()
+  } else {
+      log("macOS 13.0 or later required")
+      exit(1)
+  }
+  ```
+- **Cần Screen Recording permission**
+- **Có thể không hoạt động** ngay cả khi có permission (hạn chế của macOS)
+
+### **Kết Luận về Version Support**
+
+**✅ Hỗ trợ tốt nhất:**
+- **macOS 13+ (Ventura)**: Cả BlackHole và ScreenCaptureKit đều available
+- **macOS 10.9 - 12.x**: Chỉ BlackHole (ScreenCaptureKit không available)
+
+**⚠️ Hạn chế:**
+- **macOS < 10.9**: Không hỗ trợ (quá cũ, không có trong minimum requirements)
+- **macOS 10.13 - 12.x**: Cần cài BlackHole để dùng system audio capture
+
+**📋 Khuyến nghị:**
+- **Nếu macOS 13+**: App sẽ tự động thử BlackHole trước, fallback ScreenCaptureKit nếu BlackHole không có
+- **Nếu macOS < 13**: Chỉ dùng BlackHole (ScreenCaptureKit không available)
+- **Tốt nhất**: Cài BlackHole trên mọi macOS version để có trải nghiệm tốt nhất
+
+---
+
 ## 🎓 Kết Luận
 
 Hệ thống sử dụng:

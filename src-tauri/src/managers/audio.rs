@@ -5,7 +5,10 @@ use crate::audio_toolkit::{
 };
 
 #[cfg(target_os = "macos")]
-use crate::audio_toolkit::MacOSSystemAudio;
+use crate::audio_toolkit::{MacOSSystemAudio, ScreenCaptureKitAudio};
+
+#[cfg(target_os = "macos")]
+use crate::audio_toolkit::screencapturekit::permissions::{supports_screencapturekit, get_macos_version};
 
 #[cfg(target_os = "windows")]
 use crate::audio_toolkit::WindowsSystemAudio;
@@ -285,22 +288,57 @@ impl AudioRecordingManager {
             // System Audio Capture - macOS
             #[cfg(target_os = "macos")]
             {
-                info!("Initializing system audio capture (macOS)");
-                let mut capture = MacOSSystemAudio::new(&self.app_handle)?;
-                match capture.start_capture() {
-                    Ok(()) => {
-                        *self.system_capture.lock().unwrap() = Some(Box::new(capture));
-                        *open_flag = true;
-                        info!(
-                            "System audio capture initialized in {:?}",
-                            start_time.elapsed()
-                        );
-                    },
-                    Err(e) => {
-                        error!("Failed to start system audio capture: {}", e);
-                        *open_flag = false;
-                        // Don't set system_capture if start failed
-                        return Err(e);
+                // Check macOS version and use ScreenCaptureKit if available (macOS 13+)
+                let use_screencapturekit = supports_screencapturekit();
+                
+                if use_screencapturekit {
+                    // Use ScreenCaptureKit (macOS 13+)
+                    info!("Initializing ScreenCaptureKit system audio capture (macOS 13+)");
+                    if let Some((major, minor)) = get_macos_version() {
+                        info!("Detected macOS {}.{} - using native ScreenCaptureKit", major, minor);
+                    }
+                    
+                    let mut capture = ScreenCaptureKitAudio::new(&self.app_handle)?;
+                    match capture.start_capture() {
+                        Ok(()) => {
+                            *self.system_capture.lock().unwrap() = Some(Box::new(capture));
+                            *open_flag = true;
+                            info!(
+                                "ScreenCaptureKit audio capture initialized in {:?}",
+                                start_time.elapsed()
+                            );
+                        },
+                        Err(e) => {
+                            error!("Failed to start ScreenCaptureKit audio capture: {}", e);
+                            error!("Please ensure Screen Recording permission is granted in System Preferences > Privacy & Security > Screen Recording");
+                            *open_flag = false;
+                            return Err(e);
+                        }
+                    }
+                } else {
+                    // Fallback to BlackHole (macOS < 13)
+                    if let Some((major, minor)) = get_macos_version() {
+                        info!("Detected macOS {}.{} - ScreenCaptureKit not available, using BlackHole", major, minor);
+                    } else {
+                        info!("macOS version < 13 - ScreenCaptureKit not available, using BlackHole");
+                    }
+                    info!("Initializing BlackHole system audio capture (legacy mode)");
+                    
+                    let mut capture = MacOSSystemAudio::new(&self.app_handle)?;
+                    match capture.start_capture() {
+                        Ok(()) => {
+                            *self.system_capture.lock().unwrap() = Some(Box::new(capture));
+                            *open_flag = true;
+                            info!(
+                                "BlackHole system audio capture initialized in {:?}",
+                                start_time.elapsed()
+                            );
+                        },
+                        Err(e) => {
+                            error!("Failed to start BlackHole system audio capture: {}", e);
+                            *open_flag = false;
+                            return Err(e);
+                        }
                     }
                 }
                 

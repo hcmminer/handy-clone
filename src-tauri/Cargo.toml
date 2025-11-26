@@ -53,6 +53,7 @@ hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
 tokio = "1.43.0"
+crossbeam-channel = "0.5"
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
@@ -87,6 +88,10 @@ windows = { version = "0.61.3", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+screencapturekit = "0.3"
+core-media-rs = "0.3"
+cocoa = "0.26"
+objc = "0.2"
 
 [profile.release]
 lto = true

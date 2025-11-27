@@ -45,7 +45,13 @@ pub fn update_microphone_mode(app: AppHandle, always_on: bool) -> Result<(), Str
     write_settings(&app, settings);
 
     // Update the audio manager mode
-    let rm = app.state::<Arc<AudioRecordingManager>>();
+    let rm = match app.try_state::<Arc<AudioRecordingManager>>() {
+        Some(manager) => manager,
+        None => {
+            warn!("Recording manager not available - skipping mode update");
+            return Ok(()); // Settings already updated above
+        }
+    };
     let new_mode = if always_on {
         MicrophoneMode::AlwaysOn
     } else {
@@ -93,7 +99,13 @@ pub fn set_selected_microphone(app: AppHandle, device_name: String) -> Result<()
     write_settings(&app, settings);
 
     // Update the audio manager to use the new device
-    let rm = app.state::<Arc<AudioRecordingManager>>();
+    let rm = match app.try_state::<Arc<AudioRecordingManager>>() {
+        Some(manager) => manager,
+        None => {
+            warn!("Recording manager not available - skipping device update");
+            return Ok(()); // Settings already updated above
+        }
+    };
     rm.update_selected_device()
         .map_err(|e| format!("Failed to update selected device: {}", e))?;
 
@@ -194,7 +206,13 @@ pub async fn set_audio_source(app: AppHandle, source: String) -> Result<(), Stri
 
     // Update the audio manager to use the new source
     // Spawn in background thread to avoid blocking UI
-    let rm = app.state::<Arc<AudioRecordingManager>>();
+    let rm = match app.try_state::<Arc<AudioRecordingManager>>() {
+        Some(manager) => manager,
+        None => {
+            warn!("Recording manager not available - skipping audio source update");
+            return Ok(()); // Settings already updated
+        }
+    };
     let rm_clone = Arc::clone(&rm);
     let app_clone = app.clone();
     
@@ -228,7 +246,17 @@ pub struct SystemAudioStatus {
 
 #[tauri::command]
 pub fn get_system_audio_status(app: AppHandle) -> Result<SystemAudioStatus, String> {
-    let rm = app.state::<Arc<AudioRecordingManager>>();
+    let rm = match app.try_state::<Arc<AudioRecordingManager>>() {
+        Some(manager) => manager,
+        None => {
+            // Return default status if manager not available
+            return Ok(SystemAudioStatus {
+                permission: "unknown".to_string(),
+                capture: "not_initialized".to_string(),
+                audio_detection: "unknown".to_string(),
+            });
+        }
+    };
     let (is_open, has_audio) = rm.get_system_audio_status();
     
     // Check if permission was denied by checking if capture failed to start
@@ -270,4 +298,60 @@ pub fn get_system_audio_status(app: AppHandle) -> Result<SystemAudioStatus, Stri
         capture: capture_status.to_string(),
         audio_detection: audio_detection_status.to_string(),
     })
+}
+
+#[tauri::command]
+pub fn check_audio_initialization_status(app: AppHandle) -> Result<String, String> {
+    // Check if recording manager exists
+    match app.try_state::<Arc<AudioRecordingManager>>() {
+        Some(_) => Ok("initialized".to_string()),
+        None => {
+            // Manager not available - check settings to see if system audio was requested
+            let settings = get_settings(&app);
+            if let Some(AudioSource::SystemAudio) = settings.audio_source {
+                // System audio was requested but manager failed to initialize
+                // Emit setup event for frontend
+                log::warn!("🔔 Audio initialization check: System audio requested but not initialized, emitting setup event");
+                let _ = app.emit("system-audio-setup-required", 
+                    "System audio setup required: BlackHole not configured or ScreenCaptureKit permission not granted");
+                Ok("setup_required".to_string())
+            } else {
+                // System audio not requested, this is normal
+                Ok("not_required".to_string())
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn restart_audio_stream(app: AppHandle) -> Result<(), String> {
+    log::info!("🔄 Attempting to restart audio stream after setup...");
+    
+    // Try to get the recording manager - it might not exist if audio failed to initialize
+    let rm = match app.try_state::<Arc<AudioRecordingManager>>() {
+        Some(manager) => manager,
+        None => {
+            log::error!("❌ Recording manager not available - audio was not initialized");
+            return Err("Audio system not initialized. This might indicate a system audio configuration issue.".to_string());
+        }
+    };
+    
+    // First, stop any existing stream
+    rm.stop_microphone_stream();
+    log::info!("✅ Stopped existing audio stream");
+    
+    // Wait a moment for cleanup
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    
+    // Try to start the stream again
+    match rm.start_microphone_stream() {
+        Ok(_) => {
+            log::info!("✅ Audio stream restarted successfully!");
+            Ok(())
+        },
+        Err(e) => {
+            log::error!("❌ Failed to restart audio stream: {}", e);
+            Err(format!("Failed to start audio stream: {}", e))
+        }
+    }
 }

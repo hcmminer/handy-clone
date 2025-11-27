@@ -486,7 +486,7 @@ impl SystemAudioCapture for MacOSSystemAudio {
         if possible_path.exists() {
             log::info!("Starting ScreenCaptureKit helper: {:?}", possible_path);
 
-            match Command::new(possible_path)
+            match Command::new(&possible_path)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped()) // Capture stderr for logs
                 .spawn()
@@ -644,6 +644,12 @@ impl SystemAudioCapture for MacOSSystemAudio {
                 }
                 Err(e) => {
                     log::error!("Failed to spawn SCK helper: {}", e);
+                    // Check if it's architecture mismatch (os error 86)
+                    if e.to_string().contains("86") || e.to_string().contains("Bad CPU type") {
+                        log::warn!("⚠️ SCK helper binary architecture mismatch - binary may be compiled for different CPU architecture");
+                        log::warn!("💡 This is normal on macOS < 13 which doesn't support ScreenCaptureKit anyway");
+                        log::warn!("💡 Please use BlackHole instead by installing: brew install blackhole-2ch");
+                    }
                 }
             }
         } else {
@@ -652,10 +658,11 @@ impl SystemAudioCapture for MacOSSystemAudio {
                 "SCK helper binary not found. Searched paths relative to: {:?}",
                 current_dir
             );
+            log::warn!("💡 If you're on macOS < 13, please install BlackHole: brew install blackhole-2ch");
         }
 
         Err(anyhow!(
-            "System Audio Capture failed. Please ensure macOS 13+ and Screen Recording permission is granted."
+            "System Audio Capture failed. Please install BlackHole (brew install blackhole-2ch) and configure Multi-Output Device, or upgrade to macOS 13+ for ScreenCaptureKit support."
         ))
     }
 

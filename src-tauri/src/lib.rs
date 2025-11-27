@@ -103,9 +103,39 @@ fn show_main_window(app: &AppHandle) {
 
 fn initialize_core_logic(app_handle: &AppHandle) {
     // First, initialize the managers
-    let recording_manager = Arc::new(
-        AudioRecordingManager::new(app_handle).expect("Failed to initialize recording manager"),
-    );
+    let recording_manager = match AudioRecordingManager::new(app_handle) {
+        Ok(manager) => Arc::new(manager),
+        Err(e) => {
+            log::error!("Failed to initialize recording manager: {}", e);
+            // Check if it's a system audio setup issue
+            let error_msg = e.to_string();
+            if error_msg.contains("BlackHole") || error_msg.contains("System Audio") {
+                log::warn!("System audio not configured - app will show setup instructions");
+                // Emit event to frontend to show setup instructions
+                let _ = app_handle.emit("system-audio-setup-required", format!("System audio setup required: {}", e));
+            } else {
+                log::warn!("App will continue, but audio recording may not be available");
+            }
+            // Still continue to initialize other managers - user can setup audio later
+            // Create a dummy manager or skip audio features
+            log::info!("Continuing initialization without audio manager...");
+            // Return early but initialize other managers
+            let model_manager =
+                Arc::new(ModelManager::new(app_handle).expect("Failed to initialize model manager"));
+            let transcription_manager = Arc::new(
+                TranscriptionManager::new(app_handle, model_manager.clone())
+                    .expect("Failed to initialize transcription manager"),
+            );
+            let history_manager =
+                Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
+
+            // Add managers to Tauri's managed state (without recording manager)
+            app_handle.manage(model_manager.clone());
+            app_handle.manage(transcription_manager.clone());
+            app_handle.manage(history_manager.clone());
+            return;
+        }
+    };
     let model_manager =
         Arc::new(ModelManager::new(app_handle).expect("Failed to initialize model manager"));
     let transcription_manager = Arc::new(
@@ -129,6 +159,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             log::info!("🎯 [Initialization] System audio selected, initializing capture...");
             if let Err(e) = recording_manager.start_microphone_stream() {
                 log::error!("❌ [Initialization] Failed to initialize system audio: {}", e);
+                // Emit event to frontend to show setup instructions
+                let error_msg = e.to_string();
+                if error_msg.contains("BlackHole") || error_msg.contains("Multi-Output") {
+                    let _ = app_handle.emit("system-audio-setup-required", format!("System audio setup required: {}", e));
+                } else if error_msg.contains("Screen Recording") || error_msg.contains("permission") {
+                    let _ = app_handle.emit("screencapture-permission-required", format!("Screen Recording permission required: {}", e));
+                }
             } else {
                 log::info!("✅ [Initialization] System audio capture initialized successfully");
             }
@@ -387,6 +424,8 @@ pub fn run() {
             commands::audio::set_clamshell_microphone,
             commands::audio::get_clamshell_microphone,
             commands::audio::get_system_audio_status,
+            commands::audio::check_audio_initialization_status,
+            commands::audio::restart_audio_stream,
             helpers::clamshell::is_clamshell,
             helpers::clamshell::is_laptop,
             commands::permissions::get_macos_version,

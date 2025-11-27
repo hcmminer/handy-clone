@@ -298,7 +298,17 @@ impl AudioRecordingManager {
                         info!("Detected macOS {}.{} - using native ScreenCaptureKit", major, minor);
                     }
                     
-                    let mut capture = ScreenCaptureKitAudio::new(&self.app_handle)?;
+                    let mut capture = match ScreenCaptureKitAudio::new(&self.app_handle) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Failed to create ScreenCaptureKitAudio: {}", e);
+                            error!("Screen Recording permission may be required.");
+                            // Emit event to show setup instructions - frontend will show persistent dialog
+                            let _ = self.app_handle.emit("screencapture-permission-required", format!("Screen Recording permission required: {}", e));
+                            *open_flag = false;
+                            return Err(e);
+                        }
+                    };
                     match capture.start_capture() {
                         Ok(()) => {
                             *self.system_capture.lock().unwrap() = Some(Box::new(capture));
@@ -311,6 +321,8 @@ impl AudioRecordingManager {
                         Err(e) => {
                             error!("Failed to start ScreenCaptureKit audio capture: {}", e);
                             error!("Please ensure Screen Recording permission is granted in System Preferences > Privacy & Security > Screen Recording");
+                            // Emit event to show setup instructions - frontend will show persistent dialog
+                            let _ = self.app_handle.emit("screencapture-permission-required", format!("Screen Recording permission not granted: {}", e));
                             *open_flag = false;
                             return Err(e);
                         }
@@ -324,7 +336,17 @@ impl AudioRecordingManager {
                     }
                     info!("Initializing BlackHole system audio capture (legacy mode)");
                     
-                    let mut capture = MacOSSystemAudio::new(&self.app_handle)?;
+                    let mut capture = match MacOSSystemAudio::new(&self.app_handle) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Failed to create MacOSSystemAudio: {}", e);
+                            error!("System audio not available. Please install BlackHole and configure Multi-Output Device.");
+                            // Emit event to show setup instructions - frontend will show persistent dialog
+                            let _ = self.app_handle.emit("system-audio-setup-required", format!("BlackHole setup required: {}", e));
+                            *open_flag = false;
+                            return Err(e);
+                        }
+                    };
                     match capture.start_capture() {
                         Ok(()) => {
                             *self.system_capture.lock().unwrap() = Some(Box::new(capture));
@@ -336,6 +358,9 @@ impl AudioRecordingManager {
                         },
                         Err(e) => {
                             error!("Failed to start BlackHole system audio capture: {}", e);
+                            error!("System audio not available. Please follow setup instructions.");
+                            // Emit event to show setup instructions - frontend will show persistent dialog
+                            let _ = self.app_handle.emit("system-audio-setup-required", format!("BlackHole not configured: {}", e));
                             *open_flag = false;
                             return Err(e);
                         }
